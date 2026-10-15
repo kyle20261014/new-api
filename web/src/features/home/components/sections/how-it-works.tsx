@@ -70,10 +70,10 @@ export function HowItWorks() {
               className='relative flex flex-col items-center text-center'
             >
               <div className='relative mb-6'>
-                <div className='text-muted-foreground border-border/50 bg-muted/30 flex size-16 items-center justify-center rounded-2xl border transition-colors'>
+                <div className='text-purple-600 dark:text-purple-400 border border-purple-500/20 bg-purple-500/10 flex size-16 items-center justify-center rounded-2xl shadow-[0_0_15px_-3px_rgba(108,40,246,0.15)] transition-all'>
                   {step.icon}
                 </div>
-                <div className='bg-foreground text-background absolute -top-2 -right-2 flex size-6 items-center justify-center rounded-full text-xs font-bold'>
+                <div className='bg-gradient-to-r from-[#6C28F6] to-[#A855F7] text-white absolute -top-2 -right-2 flex size-6 items-center justify-center rounded-full text-xs font-bold shadow-md'>
                   {step.num}
                 </div>
               </div>

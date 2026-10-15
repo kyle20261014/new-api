@@ -113,7 +113,7 @@ export function PublicHeader(props: PublicHeaderProps) {
   let authContent = (
     <Button
       size='sm'
-      className='h-8 rounded-lg px-3.5 text-xs font-medium'
+      className='h-8 rounded-full px-4 text-xs font-semibold text-white bg-gradient-to-r from-[#6C28F6] to-[#A855F7] shadow-[0_2px_10px_-2px_rgba(108,40,246,0.5)] hover:shadow-[0_4px_14px_-2px_rgba(108,40,246,0.7)] hover:brightness-110 transition-all duration-200'
       render={<Link to='/sign-in' />}
     >
       {t('Sign in')}
@@ -210,7 +210,7 @@ export function PublicHeader(props: PublicHeaderProps) {
             className={cn(
               'flex items-center justify-between gap-2 transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
               scrolled
-                ? 'bg-background/60 ring-border/50 h-12 rounded-2xl pr-1.5 pl-4 shadow-[0_2px_16px_-6px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.02)] ring-[0.5px] backdrop-blur-2xl dark:shadow-[0_2px_16px_-6px_rgba(0,0,0,0.4)]'
+                ? 'bg-background/80 ring-purple-500/20 h-12 rounded-2xl pr-1.5 pl-4 shadow-[0_4px_20px_-6px_rgba(108,40,246,0.15),0_0_0_1px_rgba(108,40,246,0.1)] ring-[0.5px] backdrop-blur-2xl dark:bg-[#120c1c]/80 dark:shadow-[0_4px_20px_-6px_rgba(108,40,246,0.3)]'
                 : 'h-16 px-2'
             )}
           >
@@ -271,7 +271,7 @@ export function PublicHeader(props: PublicHeaderProps) {
                     className={cn(
                       'min-w-0 truncate rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200',
                       isActive
-                        ? 'text-foreground'
+                        ? 'text-purple-600 dark:text-purple-300 font-semibold bg-purple-500/10 dark:bg-purple-500/15'
                         : 'text-muted-foreground hover:text-foreground',
                       link.disabled && 'pointer-events-none opacity-50'
                     )}

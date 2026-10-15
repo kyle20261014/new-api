@@ -46,14 +46,14 @@ export function Features(_props: FeaturesProps) {
         'Optimized network architecture ensures millisecond response times'
       ),
       span: 'md:col-span-2',
-      icon: <Zap className='size-4 text-blue-400' />,
+      icon: <Zap className='size-4 text-purple-400' />,
       visual: (
         <div className='mt-4 grid grid-cols-3 gap-2'>
           {['OpenAI', 'Claude', 'Gemini', 'DeepSeek', 'Qwen', 'Llama'].map(
             (name) => (
               <div
                 key={name}
-                className='border-border/30 bg-muted/20 text-muted-foreground flex items-center justify-center rounded-lg border px-3 py-2 text-xs transition-colors duration-300 hover:border-blue-500/30 hover:bg-blue-500/5'
+                className='border-border/30 bg-muted/20 text-muted-foreground flex items-center justify-center rounded-lg border px-3 py-2 text-xs transition-colors duration-300 hover:border-purple-500/30 hover:bg-purple-500/10'
               >
                 {name}
               </div>

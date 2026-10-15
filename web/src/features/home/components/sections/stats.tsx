@@ -105,18 +105,18 @@ export function Stats(_props: StatsProps) {
   ]
 
   return (
-    <div className='border-border/40 bg-muted/10 relative z-10 border-y'>
-      <div className='mx-auto max-w-6xl px-6 py-10 md:py-12'>
-        <div className='grid grid-cols-2 gap-8 md:grid-cols-4 md:gap-12'>
+    <div className='relative z-10 border-y border-purple-500/15 bg-gradient-to-b from-purple-500/[0.03] to-transparent backdrop-blur-xs dark:border-purple-500/20 dark:from-purple-950/20'>
+      <div className='mx-auto max-w-6xl px-6 py-10 md:py-14'>
+        <div className='grid grid-cols-2 gap-6 md:grid-cols-4 md:gap-8'>
           {stats.map((s) => (
             <div
               key={s.label}
-              className='flex flex-col items-center text-center'
+              className='group flex flex-col items-center rounded-xl border border-transparent p-4 text-center transition-all duration-300 hover:border-purple-500/20 hover:bg-purple-500/[0.04]'
             >
-              <span className='text-2xl font-bold tracking-tight md:text-3xl'>
+              <span className='bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent dark:from-purple-400 dark:to-indigo-300 md:text-4xl'>
                 <Counter end={s.end} suffix={s.suffix} decimals={s.decimals} />
               </span>
-              <span className='text-muted-foreground mt-1.5 text-xs'>
+              <span className='text-muted-foreground/80 mt-2 text-xs font-medium uppercase tracking-wider'>
                 {s.label}
               </span>
             </div>

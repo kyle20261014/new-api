@@ -40,11 +40,11 @@ export function CTA(props: CTAProps) {
       {/* Gradient mesh background */}
       <div
         aria-hidden
-        className='absolute inset-0 -z-10 opacity-20 dark:opacity-[0.08]'
+        className='absolute inset-0 -z-10 opacity-25 dark:opacity-[0.15]'
         style={{
           background: [
-            'radial-gradient(ellipse 50% 50% at 30% 50%, oklch(0.7 0.15 250 / 70%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 40% 40% at 70% 40%, oklch(0.65 0.12 200 / 50%) 0%, transparent 70%)',
+            'radial-gradient(ellipse 60% 60% at 50% 50%, rgba(108, 40, 246, 0.35) 0%, transparent 70%)',
+            'radial-gradient(ellipse 40% 40% at 70% 40%, rgba(168, 85, 247, 0.25) 0%, transparent 70%)',
           ].join(', '),
         }}
       />
@@ -56,7 +56,7 @@ export function CTA(props: CTAProps) {
         <h2 className='text-2xl leading-tight font-bold tracking-tight md:text-4xl'>
           {t('Ready to simplify')}
           <br />
-          <span className='bg-gradient-to-r from-blue-400 via-violet-400 to-purple-500 bg-clip-text text-transparent'>
+          <span className='bg-gradient-to-r from-[#7776ff] via-[#9e72ff] to-[#ae2cf1] bg-clip-text text-transparent'>
             {t('your AI integration?')}
           </span>
         </h2>
@@ -66,13 +66,16 @@ export function CTA(props: CTAProps) {
           )}
         </p>
         <div className='mt-8 flex items-center justify-center gap-3'>
-          <Button className='group rounded-lg' render={<Link to='/sign-up' />}>
+          <Button
+            className='group h-11 rounded-lg px-6 text-sm font-semibold text-white bg-gradient-to-r from-[#6C28F6] to-[#A855F7] shadow-[0_4px_20px_-4px_rgba(108,40,246,0.5)] hover:shadow-[0_6px_24px_-2px_rgba(108,40,246,0.7)] hover:brightness-110 transition-all duration-200'
+            render={<Link to='/sign-up' />}
+          >
             {t('Get Started')}
-            <ArrowRight className='ml-1 size-3.5 transition-transform duration-200 group-hover:translate-x-0.5' />
+            <ArrowRight className='ml-1.5 size-4 transition-transform duration-200 group-hover:translate-x-1' />
           </Button>
           <Button
             variant='outline'
-            className='border-border/50 hover:border-border hover:bg-muted/50 rounded-lg'
+            className='border-purple-500/20 hover:border-purple-500/40 hover:bg-purple-500/5 h-11 rounded-lg px-5 text-sm font-medium backdrop-blur-xs'
             render={<Link to='/pricing' />}
           >
             {t('View Pricing')}
