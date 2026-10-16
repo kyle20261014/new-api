@@ -2805,7 +2805,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Với kênh tùy chỉnh nâng cao, thiết lập này chỉ áp dụng cho các route /v1/responses không chuyển đổi giao thức.",
     "GitHub ID is empty!": "ID GitHub trống!",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
@@ -7292,6 +7292,18 @@
     "Enterprise SLA Availability": "Độ khả dụng SLA doanh nghiệp",
     "Ultra-low Streaming Latency": "Độ trễ truyền phát trung bình",
     "Smart Multi-Route Scheduling · Auto-Failover Enabled": "Định tuyến đa tuyến · Tự động phục hồi lỗi",
-    "Cluster Health: 99.99% · Sub-second Self-Healing": "Trạng thái nút: 99.99% · Tự khắc phục tức thì"
+    "Cluster Health: 99.99% · Sub-second Self-Healing": "Trạng thái nút: 99.99% · Tự khắc phục tức thì",
+    "Site statistics": "Thống kê trang web",
+    "Credited top-ups": "Nạp tiền đã ghi có",
+    "Recognized revenue": "Doanh thu ghi nhận",
+    "User balance": "Số dư người dùng",
+    "Request count": "Số lượng yêu cầu",
+    "Failed to load site statistics": "Không thể tải thống kê trang web",
+    "Updated at: {{time}}": "Cập nhật lúc: {{time}}",
+    "Calculation notes": "Ghi chú tính toán",
+    "Wallet credited": "Đã vào ví",
+    "User consumption": "Tiêu dùng người dùng",
+    "Logged requests": "Yêu cầu đã ghi nhật ký",
+    "Top-ups reflect actual wallet credits. Revenue and requests are derived from recorded user consumption logs (including zero-charge calls; excludes failed logs) and depend on log retention policies. Balance represents current user wallet totals.": "Nạp tiền phản ánh số dư thực tế được ghi có vào ví. Doanh thu và yêu cầu được tính từ nhật ký tiêu dùng đã ghi (bao gồm cuộc gọi 0 phí; không tính nhật ký thất bại) và phụ thuộc vào chính sách lưu giữ nhật ký. Số dư đại diện cho tổng ví người dùng hiện tại."
   }
 }

@@ -272,3 +272,27 @@ export interface FAQItem {
   question: string
   answer: string
 }
+
+// ============================================================================
+// Site Stats Types
+// ============================================================================
+
+export interface SiteStatsPeriodData {
+  top_up_quota: number
+  consumed_quota: number
+  request_count: number
+}
+
+export interface SiteStatsData {
+  today: SiteStatsPeriodData
+  month: SiteStatsPeriodData
+  current_balance_quota: number
+  updated_at: number
+  timezone: string
+}
+
+export interface SiteStatsResponse {
+  success: boolean
+  message?: string
+  data: SiteStatsData
+}

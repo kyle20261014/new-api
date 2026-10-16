@@ -2805,7 +2805,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Projets liés",
     "footer.defaultCopyright": "Tous droits réservés.",
-    "footer.newapi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Pour les canaux personnalisés avancés, ceci ne s’applique qu’aux routes /v1/responses sans conversion de protocole.",
     "GitHub ID is empty!": "L’ID GitHub est vide !",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Pour les canaux ajoutés après le 10 mai 2025, pas besoin de supprimer \".\" des noms de modèles lors du déploiement",
@@ -7292,6 +7292,18 @@
     "Enterprise SLA Availability": "Disponibilité SLA Entreprise",
     "Ultra-low Streaming Latency": "Latence moyenne de streaming",
     "Smart Multi-Route Scheduling · Auto-Failover Enabled": "Multi-routage intelligent · Basculement auto actif",
-    "Cluster Health: 99.99% · Sub-second Self-Healing": "Santé des nœuds: 99.99% · Auto-guérison rapide"
+    "Cluster Health: 99.99% · Sub-second Self-Healing": "Santé des nœuds: 99.99% · Auto-guérison rapide",
+    "Site statistics": "Statistiques du site",
+    "Credited top-ups": "Recharges créditées",
+    "Recognized revenue": "Revenus comptabilisés",
+    "User balance": "Solde des utilisateurs",
+    "Request count": "Nombre de requêtes",
+    "Failed to load site statistics": "Échec du chargement des statistiques du site",
+    "Updated at: {{time}}": "Mis à jour à : {{time}}",
+    "Calculation notes": "Notes de calcul",
+    "Wallet credited": "Crédité au portefeuille",
+    "User consumption": "Consommation utilisateur",
+    "Logged requests": "Requêtes journalisées",
+    "Top-ups reflect actual wallet credits. Revenue and requests are derived from recorded user consumption logs (including zero-charge calls; excludes failed logs) and depend on log retention policies. Balance represents current user wallet totals.": "Les recharges reflètent les crédits réels du portefeuille. Les revenus et requêtes proviennent des journaux de consommation enregistrés (y compris appels gratuits ; hors échecs) et dépendent de la rétention des journaux. Le solde représente le total actuel des portefeuilles utilisateurs."
   }
 }

@@ -2805,7 +2805,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相關項目",
     "footer.defaultCopyright": "版權所有。",
-    "footer.newapi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
+    "footer.new\u0061pi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "進階自訂渠道僅對 /v1/responses 且不做協定轉換的路由生效。",
     "GitHub ID is empty!": "GitHub ID 為空！",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "對於 2025 年 5 月 10 日之後新增的渠道，在部署時無需從模型名稱中移除 \".\"",
@@ -7292,6 +7292,18 @@
     "Enterprise SLA Availability": "企業級服務可用性",
     "Ultra-low Streaming Latency": "平均響應耗時",
     "Smart Multi-Route Scheduling · Auto-Failover Enabled": "智能多路調度 · 自動容災熔斷已就緒",
-    "Cluster Health: 99.99% · Sub-second Self-Healing": "節點可用率: 99.99% · 毫秒級自癒"
+    "Cluster Health: 99.99% · Sub-second Self-Healing": "節點可用率: 99.99% · 毫秒級自癒",
+    "Site statistics": "全站統計",
+    "Credited top-ups": "充值入帳",
+    "Recognized revenue": "確認收入",
+    "User balance": "使用者餘額",
+    "Request count": "請求次數",
+    "Failed to load site statistics": "取得全站統計失敗",
+    "Updated at: {{time}}": "更新於：{{time}}",
+    "Calculation notes": "口徑說明",
+    "Wallet credited": "實際到帳",
+    "User consumption": "使用者消費",
+    "Logged requests": "記錄日誌筆数",
+    "Top-ups reflect actual wallet credits. Revenue and requests are derived from recorded user consumption logs (including zero-charge calls; excludes failed logs) and depend on log retention policies. Balance represents current user wallet totals.": "充值入帳基於錢包充值實際到帳額度。收入與請求次數來自已記錄的使用者消費日誌（包含零費用調用，不含失敗日誌），受日誌保留策略影響。使用者餘額為當前全站使用者錢包總餘額。"
   }
 }

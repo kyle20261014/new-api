@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -26,6 +27,19 @@ func parseFlowQuotaTimeRange(c *gin.Context) (int64, int64, bool) {
 		return 0, 0, false
 	}
 	return startTimestamp, endTimestamp, true
+}
+
+func GetSiteStats(c *gin.Context) {
+	stats, err := model.GetDashboardStats(c.Request.Context(), time.Now())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    stats,
+	})
 }
 
 func GetAllQuotaDates(c *gin.Context) {

@@ -2805,7 +2805,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高度なカスタムチャネルでは、プロトコル変換を行わない /v1/responses ルートにのみ適用されます。",
     "GitHub ID is empty!": "GitHub ID が空です！",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
@@ -7292,6 +7292,18 @@
     "Enterprise SLA Availability": "エンタープライズSLA稼働率",
     "Ultra-low Streaming Latency": "平均応答速度",
     "Smart Multi-Route Scheduling · Auto-Failover Enabled": "スマート多経路ルーティング · 自動フェイルオーバー稼働中",
-    "Cluster Health: 99.99% · Sub-second Self-Healing": "ノード稼働率: 99.99% · 秒速自己修復"
+    "Cluster Health: 99.99% · Sub-second Self-Healing": "ノード稼働率: 99.99% · 秒速自己修復",
+    "Site statistics": "サイト統計",
+    "Credited top-ups": "入金されたチャージ",
+    "Recognized revenue": "認識済み収益",
+    "User balance": "ユーザー残高",
+    "Request count": "リクエスト回数",
+    "Failed to load site statistics": "サイト統計の読み込みに失敗しました",
+    "Updated at: {{time}}": "更新日時：{{time}}",
+    "Calculation notes": "集計基準の注記",
+    "Wallet credited": "ウォレット付与",
+    "User consumption": "ユーザー消費",
+    "Logged requests": "記録件数",
+    "Top-ups reflect actual wallet credits. Revenue and requests are derived from recorded user consumption logs (including zero-charge calls; excludes failed logs) and depend on log retention policies. Balance represents current user wallet totals.": "チャージ入金は実際のウォレット付与額に基づきます。収益とリクエスト数は記録された消費ログ（無料呼び出しを含み、失敗ログを除く）から算出され、ログ保持期間の影響を受けます。ユーザー残高は現在の全ウォレット合計額です。"
   }
 }

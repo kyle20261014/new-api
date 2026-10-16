@@ -114,6 +114,43 @@ func TestTokenAuthReadOnlyTranslatesErrors(t *testing.T) {
 	}
 }
 
+func TestSiteStatsRequiresAdministratorSession(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/data/site_stats", AdminAuth(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	assert.Equal(t, http.StatusUnauthorized, middlewareBearerRequest(router, "/api/data/site_stats", "").Code)
+	for _, role := range []int{common.RoleCommonUser, common.RoleAdminUser, common.RoleRootUser} {
+		t.Run(fmt.Sprint(role), func(t *testing.T) {
+			user := createMiddlewarePATUser(t, fmt.Sprintf("stats-%d", role), fmt.Sprintf("legacy-stats-%d", role))
+			require.NoError(t, model.DB.Model(user).Update("role", role).Error)
+			session := &model.UserSession{
+				SID: fmt.Sprintf("stats-session-%d", role), UserID: user.Id, Version: 1,
+				UserAuthVersion: user.AuthVersion, Status: model.UserSessionStatusActive,
+				RefreshHash: "unused", LoginMethod: "password", LastActiveAt: time.Now().Unix(),
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			}
+			require.NoError(t, model.CreateUserSession(session))
+			identity := service.AuthIdentity{UserID: user.Id, SessionID: session.SID, UserAuthVersion: user.AuthVersion, SessionVersion: 1}
+			token, _, err := service.IssueAccessToken(identity)
+			require.NoError(t, err)
+			want := http.StatusNoContent
+			if role < common.RoleAdminUser {
+				want = http.StatusForbidden
+			}
+			assert.Equal(t, want, middlewareBearerRequest(router, "/api/data/site_stats", token).Code)
+			assert.Equal(t, http.StatusUnauthorized, middlewareBearerRequest(router, "/api/data/site_stats", issueExpiredDashboardAccessToken(t, identity)).Code)
+			assert.Equal(t, http.StatusUnauthorized, middlewareBearerRequest(router, "/api/data/site_stats", tamperDashboardToken(token)).Code)
+			pat, _ := createMiddlewareScopedToken(t, user.Id, 0, "log:read")
+			assert.Equal(t, http.StatusForbidden, middlewareBearerRequest(router, "/api/data/site_stats", pat).Code, "financial totals require an administrator login session")
+			require.NoError(t, model.DB.Model(user).Update("status", common.UserStatusDisabled).Error)
+			assert.Equal(t, http.StatusUnauthorized, middlewareBearerRequest(router, "/api/data/site_stats", token).Code)
+		})
+	}
+}
+
 func TestUserAuthAllowsOpaqueDottedPAT(t *testing.T) {
 	setupDashboardAuthMiddlewareTest(t)
 	user := createMiddlewarePATUser(t, "dotted-pat-user", "opaque.key.with-dots")

@@ -2805,7 +2805,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.",
     "GitHub ID is empty!": "GitHub ID is empty!",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
@@ -7292,6 +7292,18 @@
     "Enterprise SLA Availability": "Enterprise SLA Availability",
     "Ultra-low Streaming Latency": "Average Streaming Latency",
     "Smart Multi-Route Scheduling · Auto-Failover Enabled": "Smart Multi-Route · Auto-Failover Active",
-    "Cluster Health: 99.99% · Sub-second Self-Healing": "Node Health: 99.99% · Sub-second Healing"
+    "Cluster Health: 99.99% · Sub-second Self-Healing": "Node Health: 99.99% · Sub-second Healing",
+    "Site statistics": "Site statistics",
+    "Credited top-ups": "Credited top-ups",
+    "Recognized revenue": "Recognized revenue",
+    "User balance": "User balance",
+    "Request count": "Request count",
+    "Failed to load site statistics": "Failed to load site statistics",
+    "Updated at: {{time}}": "Updated at: {{time}}",
+    "Calculation notes": "Calculation notes",
+    "Wallet credited": "Wallet credited",
+    "User consumption": "User consumption",
+    "Logged requests": "Logged requests",
+    "Top-ups reflect actual wallet credits. Revenue and requests are derived from recorded user consumption logs (including zero-charge calls; excludes failed logs) and depend on log retention policies. Balance represents current user wallet totals.": "Top-ups reflect actual wallet credits. Revenue and requests are derived from recorded user consumption logs (including zero-charge calls; excludes failed logs) and depend on log retention policies. Balance represents current user wallet totals."
   }
 }

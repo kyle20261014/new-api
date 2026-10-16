@@ -21,6 +21,7 @@ import { api } from '@/lib/api'
 import type {
   FlowQuotaDataItem,
   QuotaDataItem,
+  SiteStatsResponse,
   UptimeGroupResult,
 } from './types'
 
@@ -89,5 +90,14 @@ export async function getUptimeStatus() {
   const res = await api.get<{ success: boolean; data: UptimeGroupResult[] }>(
     '/api/uptime/status'
   )
+  return res.data
+}
+
+// ----------------------------------------------------------------------------
+// Site Statistics
+// ----------------------------------------------------------------------------
+
+export async function getSiteStats() {
+  const res = await api.get<SiteStatsResponse>('/api/data/site_stats')
   return res.data
 }
