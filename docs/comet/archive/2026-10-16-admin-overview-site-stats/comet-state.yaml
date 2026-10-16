@@ -1,0 +1,444 @@
+schema: comet.native.v4
+name: admin-overview-site-stats
+language: zh-CN
+phase: archive
+status: done
+state_version: 10
+brief: brief.md
+document_constraints_version: 3
+shape_confirmation_hash: 3620931a7cc49e26b29dcaf9e952646f0698e5fb6befa6dc69bc836bf682b914
+spec_changes:
+  - capability: admin-overview-stats
+    operation: create
+    source: specs/admin-overview-stats/spec.md
+workspace:
+  isolation: current
+  change_branch: main
+  target_branch: main
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 2
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 1
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: 管理员和超级管理员进入概览页，在现有引导和个人摘要之前看到全站统计；普通用户不展示、不请求该数据，未登录和无管理员权限的直接接口调用被拒绝。
+    result: passed
+    reason:
+      text: Independently traced overview placement, role-gated query, AdminAuth route
+        and explicit session-only PAT rule. Runtime regressions pass for
+        administrator/root sessions and
+        ordinary/anonymous/invalid/expired/disabled/PAT rejection; frontend
+        tests prove ordinary users and guests do not request stats. Live
+        overview places statistics before onboarding and personal usage.
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: 今日、本月按 Asia/Shanghai 的自然日和月初起点分别聚合至当前；跨日、跨月和月初边界正确，未来记录不计入。
+    result: passed
+    reason:
+      text: GetDashboardStats generates Asia/Shanghai day/month starts server-side and
+        caps completion/log times at now. Actual SQLite/MySQL/PostgreSQL
+        regressions cover exact starts, prior day/month, future records, month
+        start and January rollover with UTC input.
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: 只有已成功完成的充值按完成时间计入充值入账；待支付、失效和失败订单不计入；支付渠道单位换算与现有钱包入账一致，订阅镜像不重复计入钱包充值。
+    result: passed
+    reason:
+      text: "Successful TopUp orders are selected by complete_time, subscription trade
+        numbers excluded, and per-order WalletQuotaFromDecimalStrict conversions
+        match actual wallet credit paths: Stripe Money*QuotaPerUnit, Creem
+        Amount as quota, other providers Amount*QuotaPerUnit. Real three-engine
+        tests cover rounding, statuses and mirrors."
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: 用户余额显示所有未删除用户的当前钱包余额总和，两组均标注当前；空数据为零，禁用但未删除用户仍计入。
+    result: passed
+    reason:
+      text: Scoped User aggregate excludes soft-deleted users, retains disabled users,
+        and COALESCE returns zero for empty sets. Three-engine fixtures verify
+        these rules. Both UI groups use the same current_balance_quota and
+        visible Current badge; live page shows identical current balances.
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: 确认收入统计各区间内全站已记录消费额度，请求次数统计对应消费日志笔数且包含零费用调用、不含失败日志；界面简要解释消费记录口径与日志保留限制，不出现独立消费金额卡片。
+    result: passed
+    reason:
+      text: Configured LOG_DB is queried for LogTypeConsume SUM(quota) and COUNT(*),
+        including zero-charge and subscription consumption while excluding
+        error/refund/top-up logs and future records. Separate-log decoy
+        regression passes. UI has four requested metrics and explains
+        recorded-consumption/log-retention limits without an independent
+        consumption-amount card.
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: 加载展示占位，失败展示真实错误和可重试入口，不能把失败伪装为零；窄屏不横向溢出，金额按现有设置显示且保留必要精度，数字随语言切换正确格式化，新增文案支持七种界面语言。
+    result: passed
+    reason:
+      text: Reviewed shared StatCard/ErrorState/formatters, loading and real-error
+        retry paths, six-decimal micro-charge precision, reactive currency
+        subscription and toIntlLocale usage; checked added translations in all
+        seven locale diffs. Runtime component tests cover loading, errors/retry,
+        zero, $0.000002, currency updates and Chinese/French switching. Own live
+        375x812 Chinese/French inspection shows no visible horizontal overflow
+        and currency placement updates from $200 to 200 $.
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: 后端统计行为在真实 SQLite、MySQL、PostgreSQL 实例通过；前端受影响回归、类型检查、lint 和生产构建通过。
+    result: passed
+    reason:
+      text: "Reused current-candidate Runtime evidence: all seven checks exit 0,
+        backend-regression on real SQLite 3.50.4/MySQL 8.0.46/PostgreSQL 16.15
+        plus auth regressions, go build ./..., 82 frontend tests, typecheck,
+        lint of all five affected TS/TSX files under the existing oxlint config,
+        production build and git diff --check. No additional Runtime checks were
+        needed."
+      truncated: false
+builder_handoff:
+  candidate_id: 138a7494-50da-44a1-8e34-576359078706
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:f50779ce-0ba0-411f-b515-6d8b3cae0211
+  iteration: 2
+  summary:
+    text: 已在管理员概览顶部实现今日、本月全站充值入账、确认收入、当前用户余额和请求次数。后端生成上海时区可信边界、隔离主库与日志库、复用钱包逐单
+      decimal 舍入并排除订阅镜像；路由仅管理员会话访问。前端复用共享
+      StatCard/ErrorState，含加载、错误重试、微小金额、动态货币与七语言。开发期真实三库、授权、前端相关检查及桌面/375px
+      浏览器均通过。请对 A1–A7 完整独立验收。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+  acceptance_review:
+    - id: A1
+      status: implemented-with-evidence
+      evidence:
+        - "router/api-router.go: GET /api/data/site_stats uses AdminAuth;
+          middleware/access_token_routes.go explicitly session-only"
+        - "middleware/auth_test.go: TestSiteStatsRequiresAdministratorSession
+          verifies common403, anonymous401, admin/root success,
+          invalid/expired/disabled rejection and PAT403"
+        - web/src/features/dashboard/components/overview/overview-dashboard.tsx
+          mounts SiteStats first in Content; site-stats.test.tsx verifies
+          common/guest no request and admin/root render
+        - Browser http://localhost:5173/dashboard/overview observed real
+          statistics above existing setup guide
+      note: 客户端角色隐藏与服务端会话/角色鉴权同时生效。
+    - id: A2
+      status: implemented-with-evidence
+      evidence:
+        - "model/dashboard_stats.go: GetDashboardStats creates Asia/Shanghai
+          natural-day/month starts and bounds both data sources through now"
+        - "model/dashboard_stats_test.go: TestDashboardStatsDatabaseMatrix
+          covers day/month boundaries, exact start, future records and January
+          rollover on three real engines"
+      note: 时间范围完全由服务端生成，不接收无限跨度查询。
+    - id: A3
+      status: implemented-with-evidence
+      evidence:
+        - "model/dashboard_stats.go: successful TopUp completed-time streaming,
+          exclusion of SubscriptionOrder trade numbers and provider-specific
+          decimal wallet conversion"
+        - "model/dashboard_stats_test.go: Stripe half-unit rounding, Creem
+          quota, other payment amounts, pending/failed/expired/future exclusion
+          and subscription mirror cases passed SQLite/MySQL/PostgreSQL"
+      note: 复用 WalletQuotaFromDecimalStrict 的真实逐单舍入；无支付或结算写入改动。
+    - id: A4
+      status: implemented-with-evidence
+      evidence:
+        - "model/dashboard_stats.go: User model scoped COALESCE SUM excludes
+          deleted users while retaining disabled accounts"
+        - "model/dashboard_stats_test.go: active/disabled/deleted users, large
+          sums and empty totals"
+        - "site-stats.tsx: both groups use same current_balance_quota with
+          Current badge; browser shows $200 in both groups"
+      note: 不从消费记录逆算历史余额。
+    - id: A5
+      status: implemented-with-evidence
+      evidence:
+        - "model/dashboard_stats.go: LOG_DB LogTypeConsume SUM quota and COUNT
+          including zero-charge records"
+        - "model/dashboard_stats_test.go: paid, zero quota, error/refund
+          exclusion and decoy main-db logs"
+        - "site-stats.tsx and seven locale files: user-consumption/log-retention
+          explanation, fourth metric Request count"
+      note: 确认收入为已记录用户消费额度，请求次数为消费日志笔数；不出现独立消费金额卡片。
+    - id: A6
+      status: implemented-with-evidence
+      evidence:
+        - "web/src/features/dashboard/components/overview/__tests__/site-stats.\
+          test.tsx: 10 tests cover roles, loading, retry, zeros, $0.000002,
+          currency subscription and real Chinese/French i18n"
+        - site-stats.tsx uses shared StatCard, ErrorState, number/currency
+          formatters and toIntlLocale; all seven locales have keys inside
+          translation namespace
+        - Browser desktop 1920px and iPhone SE375px screenshots verified top
+          placement and no visible horizontal overflow; Chinese→French→Chinese
+          updated labels, dates and currency placement; refresh advanced
+          timestamp from16:19:22 to16:20:25
+      note: 首次加载占位、失败不冒充零；保留6位小数表达微小消费。
+    - id: A7
+      status: implemented-with-evidence
+      evidence:
+        - Development go test -count=1 -v ./model -run
+          TestDashboardStatsDatabaseMatrix passed SQLite3.50.4, MySQL8.0.46,
+          PostgreSQL16.15 using separate isolated main/log fixtures
+        - Development focused middleware auth and route-rule checks passed; go
+          build -o new-api-next.exe . passed
+        - Frontend child reported dashboard56/56, Intl-locale26/26, typecheck,
+          affected-file oxlint, diff-check and production build all passed;
+          formal Runtime check plan below rebinds evidence to frozen candidate
+      note: 无schema变更；完整正式检查由Runtime执行。
+  checks:
+    - name:
+        text: real-three-database-regressions
+        truncated: false
+      result: passed
+      note:
+        text: SQLite3.50.4/MySQL8.0.46/PostgreSQL16.15; decimal half rounding fixed
+          after actual MySQL finding
+        truncated: false
+    - name:
+        text: authorization-and-build
+        truncated: false
+      result: passed
+      note:
+        text: Existing middleware test file extended; admin/root pass,
+          common/anonymous/PAT/expired/tampered/disabled deny; root executable
+          build passed
+        truncated: false
+    - name:
+        text: frontend-regressions
+        truncated: false
+      result: passed
+      note:
+        text: Dashboard56, Intl26, typecheck, affected lint, production build; browser
+          desktop/mobile/locale/refresh verified
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: 首次正式检查中的全仓 bun run lint 未通过：1320文件有65警告164错误，错误日志不含本次修改的5个前端文件，git
+        diff确认报错文件未修改。A7约定受影响前端lint，现保留原失败记录并用相同规则对全部5个受影响文件正式检查；未修复无关存量lint问题。
+      truncated: false
+    - text: 授权评审参考 OWASP ASVS5.0.0 V8.2.1/V8.3.1、Authentication/Session
+        Management/Authorization Cheat
+        Sheets；服务端管理员会话与PAT拒绝、过期和禁用失效路径已测试。未改动现有登录机制。
+      truncated: false
+    - text: 确认收入和请求次数取已记录的消费日志，受消费日志开关和保留策略影响；界面明确说明。
+      truncated: false
+    - text: 充值展示实际钱包到账额度的统一货币显示值，不是混合币种支付实收金额；当前余额不是历史快照。
+      truncated: false
+    - text: Dev backend and Bun frontend remain running in persistent terminals.
+        Isolated MySQL/PostgreSQL are temporary validation services and will be
+        stopped after formal verification.
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-10-16T08:26:27.729Z
+blockers: []
+verification:
+  candidate_id: 138a7494-50da-44a1-8e34-576359078706
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:7a2619fb-b038-4754-91f1-bbadd5bfde85
+  iteration: 2
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: backend-regression
+      name:
+        text: Three real databases and administrator session security
+        truncated: false
+      argv_display:
+        - text: -NoProfile
+          truncated: false
+        - text: -Command
+          truncated: false
+        - text: |-
+            . 'C:\Users\caiqy\AppData\Local\Temp\newapi-a7-env.ps1'
+            go test -count=1 -v ./model ./middleware -run 'TestDashboardStatsDatabaseMatrix|TestSiteStatsRequiresAdministratorSession|TestUserAuthAppliesAccessTokenRouteRules'
+            exit $LASTEXITCODE
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 10980
+    - id: backend-build
+      name:
+        text: Go backend build
+        truncated: false
+      argv_display:
+        - text: build
+          truncated: false
+        - text: ./...
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 28613
+    - id: frontend-tests
+      name:
+        text: Dashboard and Intl regression tests
+        truncated: false
+      argv_display:
+        - text: run
+          truncated: false
+        - text: test
+          truncated: false
+        - text: src/features/dashboard
+          truncated: false
+        - text: scripts/oxlint/__tests__/intl-locale.test.ts
+          truncated: false
+      argv_truncated: false
+      cwd_ref: web
+      status: passed
+      exit_code: 0
+      duration_ms: 20440
+    - id: frontend-typecheck
+      name:
+        text: Frontend TypeScript check
+        truncated: false
+      argv_display:
+        - text: run
+          truncated: false
+        - text: typecheck
+          truncated: false
+      argv_truncated: false
+      cwd_ref: web
+      status: passed
+      exit_code: 0
+      duration_ms: 4940
+    - id: frontend-lint-affected
+      name:
+        text: Lint all affected frontend source and test files
+        truncated: false
+      argv_display:
+        - text: run
+          truncated: false
+        - text: oxlint
+          truncated: false
+        - text: -c
+          truncated: false
+        - text: .oxlintrc.json
+          truncated: false
+        - text: src/features/dashboard/api.ts
+          truncated: false
+        - text: src/features/dashboard/types.ts
+          truncated: false
+        - text: src/features/dashboard/components/overview/overview-dashboard.tsx
+          truncated: false
+        - text: src/features/dashboard/components/overview/site-stats.tsx
+          truncated: false
+        - text: src/features/dashboard/components/overview/__tests__/site-stats.test.tsx
+          truncated: false
+      argv_truncated: false
+      cwd_ref: web
+      status: passed
+      exit_code: 0
+      duration_ms: 977
+    - id: frontend-build
+      name:
+        text: Frontend production build
+        truncated: false
+      argv_display:
+        - text: run
+          truncated: false
+        - text: build
+          truncated: false
+      argv_truncated: false
+      cwd_ref: web
+      status: passed
+      exit_code: 0
+      duration_ms: 17636
+    - id: diff-check
+      name:
+        text: Patch whitespace check
+        truncated: false
+      argv_display:
+        - text: diff
+          truncated: false
+        - text: --check
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 148
+  summary:
+    text: Independent read-only verification completed for all A1-A7 before reading
+      and corroborating Builder handoff. No blocking implementation defect
+      found. Formal current-candidate checks reused after examining Runtime
+      binding and actual logs; no product, test, spec, report or Runtime files
+      manually changed. Own browser session closed after restoring Chinese.
+      Return to parent for Runtime submission; no acceptance/archive performed.
+    truncated: false
+  risks:
+    - text: Full-repository bun run lint remains failed with 65 warnings and 164
+        errors in unchanged files. Only the formal affected-file lint check
+        passed; this verdict does not claim repository-wide lint success.
+      truncated: false
+    - text: Revenue/request totals intentionally depend on recorded consumption logs
+        and retention; they are not payment receipts or profit. Current balance
+        is a current wallet total, not a historical snapshot.
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-10-16T08:35:53.835Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: "Builder handoff Runtime checks failed: frontend-lint"
+      truncated: false
+    completed_at: 2026-10-16T08:24:34.170Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: Independent read-only verification completed for all A1-A7 before reading
+        and corroborating Builder handoff. No blocking implementation defect
+        found. Formal current-candidate checks reused after examining Runtime
+        binding and actual logs; no product, test, spec, report or Runtime files
+        manually changed. Own browser session closed after restoring Chinese.
+        Return to parent for Runtime submission; no acceptance/archive
+        performed.
+      truncated: false
+    completed_at: 2026-10-16T08:35:53.835Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-10-16T07:31:38.162Z
