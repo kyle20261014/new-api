@@ -47,6 +47,7 @@ import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
 export interface ModelCardProps {
   model: PricingModel
   onClick: (modelName: string) => void
+  onDetailsClick?: (modelName: string) => void
   priceRate?: number
   usdExchangeRate?: number
   tokenUnit?: TokenUnit
@@ -266,7 +267,20 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   }
 
   return (
-    <Card className='hover:ring-foreground/20 h-full min-w-0 gap-3 transition-colors'>
+    <Card
+      className='hover:ring-foreground/20 h-full min-w-0 cursor-pointer gap-3 transition-colors'
+      onClick={(event) => {
+        // Nested controls keep their own actions instead of opening Playground.
+        if (
+          event.target instanceof Element &&
+          event.target.closest(
+            'button, a, input, select, textarea, [role="button"]'
+          )
+        )
+          {return}
+        props.onClick(props.model.model_name)
+      }}
+    >
       <CardHeader className='flex flex-row items-start gap-3'>
         <div
           aria-hidden
@@ -407,9 +421,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           <Button
             variant='ghost'
             size='sm'
-            onClick={() => props.onClick(props.model.model_name || '')}
+            onClick={() =>
+              (props.onDetailsClick ?? props.onClick)(props.model.model_name)
+            }
           >
-            {t('Playground')}
+            {t('Details')}
             <ChevronRight aria-hidden className='size-3.5' />
           </Button>
         </ModelPerfBadge>

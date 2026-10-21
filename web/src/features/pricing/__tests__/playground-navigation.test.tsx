@@ -85,6 +85,14 @@ beforeEach(() => {
         },
       }
     }
+    if (url.startsWith('/api/perf-metrics')) {
+      return {
+        data: {
+          success: true,
+          data: { summary: {}, models: [], groups: [], series: [] },
+        },
+      }
+    }
     return { data: { success: true, data: null } }
   })
 })
@@ -131,7 +139,7 @@ async function openPage(path: string) {
   return router
 }
 
-it.each(['card', 'card-name', 'table'])(
+it.each(['card', 'card-name', 'card-body', 'table'])(
   'clicking a model in %s view opens Playground with that model and a compatible group',
   async (view) => {
     const user = userEvent.setup()
@@ -140,8 +148,10 @@ it.each(['card', 'card-name', 'table'])(
     )
     await screen.findByText('provider/chat-model')
     if (view === 'card') {
-      screen.getByRole('button', { name: 'Playground' }).focus()
+      screen.getByRole('button', { name: 'provider/chat-model' }).focus()
       await user.keyboard('{Enter}')
+    } else if (view === 'card-body') {
+      await user.click(screen.getByText('No description available.'))
     } else await user.click(screen.getByText('provider/chat-model'))
     await waitFor(() =>
       expect(router.state.location.pathname).toBe('/playground')
@@ -186,4 +196,14 @@ it('a preselected model can still be changed manually in Playground', async () =
   await waitFor(() =>
     expect(screen.getAllByRole('combobox')[0]).toHaveTextContent('other-model')
   )
+})
+
+it('clicking Details opens the model details without navigating to Playground', async () => {
+  const user = userEvent.setup()
+  const router = await openPage('/pricing')
+  await user.click(await screen.findByRole('button', { name: 'Details' }))
+  expect(await screen.findByRole('dialog')).toHaveTextContent(
+    'provider/chat-model'
+  )
+  expect(router.state.location.pathname).toBe('/pricing')
 })

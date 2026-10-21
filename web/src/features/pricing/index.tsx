@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate } from '@tanstack/react-router'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
@@ -31,6 +31,7 @@ import {
   PricingSidebar,
   PricingToolbar,
   ModelCardGrid,
+  ModelDetailsDrawer,
 } from './components'
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
@@ -39,12 +40,17 @@ import { usePricingData } from './hooks/use-pricing-data'
 export function Pricing() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const [selectedModelName, setSelectedModelName] = useState<string | null>(
+    null
+  )
 
   const {
     models,
     vendors,
     groupRatio,
     usableGroup,
+    endpointMap,
+    autoGroups,
     isLoading,
     priceRate,
     usdExchangeRate,
@@ -97,6 +103,12 @@ export function Pricing() {
     [models, usableGroup, groupFilter, navigate]
   )
 
+  const selectedModel = useMemo(
+    () =>
+      models.find((model) => model.model_name === selectedModelName) ?? null,
+    [models, selectedModelName]
+  )
+
   const availableGroups = useMemo(
     () =>
       Object.keys(usableGroup || {}).filter(
@@ -126,6 +138,7 @@ export function Pricing() {
         <ModelCardGrid
           models={filteredModels}
           onModelClick={handleModelClick}
+          onModelDetailsClick={setSelectedModelName}
           priceRate={priceRate}
           usdExchangeRate={usdExchangeRate}
           tokenUnit={tokenUnit}
@@ -259,6 +272,28 @@ export function Pricing() {
               {renderPricingContent()}
             </main>
           </div>
+          {selectedModel && (
+            <ModelDetailsDrawer
+              open={Boolean(selectedModel)}
+              onOpenChange={(open) => {
+                if (!open) setSelectedModelName(null)
+              }}
+              model={selectedModel}
+              groupRatio={groupRatio || {}}
+              usableGroup={usableGroup || {}}
+              endpointMap={
+                (endpointMap as Record<
+                  string,
+                  { path?: string; method?: string }
+                >) || {}
+              }
+              autoGroups={autoGroups || []}
+              priceRate={priceRate ?? 1}
+              usdExchangeRate={usdExchangeRate ?? 1}
+              tokenUnit={tokenUnit}
+              showRechargePrice={showRechargePrice}
+            />
+          )}
         </PageTransition>
       </div>
     </PublicLayout>

@@ -151,9 +151,28 @@ describe('model cards', () => {
     await user.click(screen.getByRole('button', { name: 'Copy model name' }))
     expect(await navigator.clipboard.readText()).toBe(name)
     expect(onClick).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Playground' }))
+    await user.click(screen.getByRole('button', { name: 'Details' }))
     expect(onClick).toHaveBeenCalledOnce()
     expect(onClick).toHaveBeenCalledWith(name)
+  })
+
+  it('clicking card content selects the model while Details only opens details', async () => {
+    const user = userEvent.setup()
+    const onClick = vi.fn()
+    const onDetailsClick = vi.fn()
+    render(
+      <ModelCard
+        model={pricingModel()}
+        onClick={onClick}
+        onDetailsClick={onDetailsClick}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Details' }))
+    expect(onDetailsClick).toHaveBeenCalledWith('example-model')
+    expect(onClick).not.toHaveBeenCalled()
+    await user.click(screen.getByText('No description available.'))
+    expect(onClick).toHaveBeenCalledExactlyOnceWith('example-model')
+    expect(onDetailsClick).toHaveBeenCalledOnce()
   })
 
   it('shows missing values without placeholder bars when metrics are unavailable', () => {
@@ -171,7 +190,7 @@ describe('model cards', () => {
     expect(statusStrip).toHaveTextContent('—')
     expect(statusStrip.querySelectorAll('[aria-hidden]')).toHaveLength(0)
     expect(screen.getByText('No description available.')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Playground' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Details' })).toBeEnabled()
   })
 
   it('uses fixed spacing between available status samples', () => {
@@ -582,7 +601,7 @@ describe('model cards', () => {
       ).getAllByText(/^—/)
     ).toHaveLength(4)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Playground' }))
+    await user.click(screen.getByRole('button', { name: 'Details' }))
     expect(onModelClick).toHaveBeenCalledWith('example-model')
   })
 
