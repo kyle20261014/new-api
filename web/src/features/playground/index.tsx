@@ -24,8 +24,11 @@ import {
   usePlaygroundOptions,
   usePlaygroundState,
 } from './hooks'
+import type { PlaygroundConfig } from './types'
 
-export function Playground() {
+export function Playground(props: {
+  initialSelection?: Partial<Pick<PlaygroundConfig, 'model' | 'group'>>
+}) {
   const {
     config,
     parameterEnabled,
@@ -39,7 +42,7 @@ export function Playground() {
     updateConfig,
     updateParameterEnabled,
     clearMessages,
-  } = usePlaygroundState()
+  } = usePlaygroundState(props.initialSelection)
 
   const { sendChat, stopGeneration, isGenerating } = useChatHandler({
     config,

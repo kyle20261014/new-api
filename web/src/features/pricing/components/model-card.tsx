@@ -279,11 +279,17 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           )}
         </div>
         <div className='min-w-0 flex-1'>
-          <h3
-            className='line-clamp-2 font-mono text-[15px] leading-snug font-semibold [overflow-wrap:anywhere]'
-            title={props.model.model_name}
-          >
-            {props.model.model_name}
+          <h3 title={props.model.model_name}>
+            <Button
+              variant='link'
+              className='h-auto max-w-full justify-start p-0 text-left font-mono text-[15px] leading-snug font-semibold whitespace-normal'
+              title={props.model.model_name}
+              onClick={() => props.onClick(props.model.model_name)}
+            >
+              <span className='line-clamp-2 [overflow-wrap:anywhere]'>
+                {props.model.model_name}
+              </span>
+            </Button>
           </h3>
           {props.model.vendor_name && (
             <p
@@ -403,7 +409,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             size='sm'
             onClick={() => props.onClick(props.model.model_name || '')}
           >
-            {t('Details')}
+            {t('Playground')}
             <ChevronRight aria-hidden className='size-3.5' />
           </Button>
         </ModelPerfBadge>

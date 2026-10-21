@@ -140,7 +140,7 @@ describe('model cards', () => {
     expect(screen.getByText('$1.5')).toBeVisible()
   })
 
-  it('copies the complete long model name without opening details', async () => {
+  it('copies the complete long model name without selecting the model', async () => {
     const user = userEvent.setup()
     const onClick = vi.fn()
     const name = 'provider/model-with-a-long-name-and-a-version-suffix-20260906'
@@ -151,7 +151,7 @@ describe('model cards', () => {
     await user.click(screen.getByRole('button', { name: 'Copy model name' }))
     expect(await navigator.clipboard.readText()).toBe(name)
     expect(onClick).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Details' }))
+    await user.click(screen.getByRole('button', { name: 'Playground' }))
     expect(onClick).toHaveBeenCalledOnce()
     expect(onClick).toHaveBeenCalledWith(name)
   })
@@ -171,7 +171,7 @@ describe('model cards', () => {
     expect(statusStrip).toHaveTextContent('—')
     expect(statusStrip.querySelectorAll('[aria-hidden]')).toHaveLength(0)
     expect(screen.getByText('No description available.')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Details' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Playground' })).toBeEnabled()
   })
 
   it('uses fixed spacing between available status samples', () => {
@@ -582,7 +582,7 @@ describe('model cards', () => {
       ).getAllByText(/^—/)
     ).toHaveLength(4)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Details' }))
+    await user.click(screen.getByRole('button', { name: 'Playground' }))
     expect(onModelClick).toHaveBeenCalledWith('example-model')
   })
 

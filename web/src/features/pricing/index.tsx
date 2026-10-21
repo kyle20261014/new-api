@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useMemo, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
@@ -30,7 +31,6 @@ import {
   PricingSidebar,
   PricingToolbar,
   ModelCardGrid,
-  ModelDetailsDrawer,
 } from './components'
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
@@ -38,17 +38,13 @@ import { usePricingData } from './hooks/use-pricing-data'
 
 export function Pricing() {
   const { t } = useTranslation()
-  const [selectedModelName, setSelectedModelName] = useState<string | null>(
-    null
-  )
+  const navigate = useNavigate()
 
   const {
     models,
     vendors,
     groupRatio,
     usableGroup,
-    endpointMap,
-    autoGroups,
     isLoading,
     priceRate,
     usdExchangeRate,
@@ -83,18 +79,22 @@ export function Pricing() {
     clearSearch,
   } = useFilters(models || [])
 
-  const handleModelClick = useCallback((modelName: string) => {
-    setSelectedModelName(modelName)
-  }, [])
+  const handleModelClick = useCallback(
+    (modelName: string) => {
+      const model = models.find((item) => item.model_name === modelName)
+      const groups = (model?.enable_groups || []).filter((group) =>
+        Object.hasOwn(usableGroup, group)
+      )
+      const group = groups.includes(groupFilter)
+        ? groupFilter
+        : (groups.find((item) => item === 'default') ?? groups[0])
 
-  const selectedModel = useMemo(
-    () =>
-      selectedModelName
-        ? (models || []).find(
-            (model) => model.model_name === selectedModelName
-          ) || null
-        : null,
-    [models, selectedModelName]
+      void navigate({
+        to: '/playground',
+        search: { model: modelName, group },
+      })
+    },
+    [models, usableGroup, groupFilter, navigate]
   )
 
   const availableGroups = useMemo(
@@ -259,29 +259,6 @@ export function Pricing() {
               {renderPricingContent()}
             </main>
           </div>
-
-          {selectedModel && (
-            <ModelDetailsDrawer
-              open={Boolean(selectedModel)}
-              onOpenChange={(open) => {
-                if (!open) setSelectedModelName(null)
-              }}
-              model={selectedModel}
-              groupRatio={groupRatio || {}}
-              usableGroup={usableGroup || {}}
-              endpointMap={
-                (endpointMap as Record<
-                  string,
-                  { path?: string; method?: string }
-                >) || {}
-              }
-              autoGroups={autoGroups || []}
-              priceRate={priceRate ?? 1}
-              usdExchangeRate={usdExchangeRate ?? 1}
-              tokenUnit={tokenUnit}
-              showRechargePrice={showRechargePrice}
-            />
-          )}
         </PageTransition>
       </div>
     </PublicLayout>
