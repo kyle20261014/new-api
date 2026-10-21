@@ -46,3 +46,8 @@ go.work
 go.work.sum
 generate/
 stitch-*.png
+# >>> Comet managed project state >>>
+!/.comet/
+/.comet/*
+!/.comet/config.yaml
+# <<< Comet managed project state <<<
