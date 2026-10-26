@@ -18,17 +18,21 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { SectionPageLayout } from '@/components/layout'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
+import { handleServerError } from '@/lib/handle-server-error'
 
+import { checkIdatarRiverOrder } from './api'
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { TransferDialog } from './components/dialogs/transfer-dialog'
+import { IdataRiverTopup } from './components/idatariver-topup'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
@@ -46,6 +50,7 @@ import {
   getDefaultPaymentType,
   getMinTopupAmount,
   dispatchSelectedPayment,
+  evaluateTopupOutcome,
 } from './lib'
 import type {
   UserWalletData,
@@ -57,6 +62,7 @@ import type {
 
 interface WalletProps {
   initialShowHistory?: boolean
+  initialTradeNo?: string
 }
 
 export function Wallet(props: WalletProps) {
@@ -135,6 +141,53 @@ export function Wallet(props: WalletProps) {
       window.history.replaceState({}, '', window.location.pathname)
     }
   }, [props.initialShowHistory])
+
+  const initialTradeNoCheckedRef = useRef(false)
+  useEffect(() => {
+    const tradeNo = props.initialTradeNo?.trim()
+    if (tradeNo && !initialTradeNoCheckedRef.current) {
+      initialTradeNoCheckedRef.current = true
+      window.history.replaceState({}, '', window.location.pathname)
+
+      void (async () => {
+        try {
+          const res = await checkIdatarRiverOrder(tradeNo)
+          if (res.success && res.data) {
+            const outcome = evaluateTopupOutcome(
+              res.data.status,
+              res.data.refund_status
+            )
+            if (outcome.kind === 'success') {
+              toast.success(t(outcome.messageKey))
+              await fetchUser()
+            } else if (
+              outcome.kind === 'refunded_recovered' ||
+              outcome.kind === 'refunded_before_credit'
+            ) {
+              toast.info(t(outcome.messageKey))
+              await fetchUser()
+            } else if (outcome.kind === 'refunded_manual') {
+              toast.warning(t(outcome.messageKey))
+            } else if (outcome.kind === 'expired') {
+              toast.warning(t(outcome.messageKey))
+            } else if (outcome.kind === 'pending') {
+              toast.info(
+                t(
+                  'Payment is still pending. You can check the status in Order History.'
+                )
+              )
+            } else {
+              toast.info(t(outcome.messageKey, { status: res.data.status }))
+            }
+          } else {
+            handleServerError(res, t('Failed to check order status'))
+          }
+        } catch (err) {
+          handleServerError(err, t('Failed to check order status'))
+        }
+      })()
+    }
+  }, [props.initialTradeNo, fetchUser, t])
 
   // Initialize topup amount when topup info is loaded
   const topupAmountInitializedRef = useRef(false)
@@ -297,7 +350,7 @@ export function Wallet(props: WalletProps) {
                   : 'grid gap-4'
               }
             >
-              <div id='wallet-add-funds' className='scroll-mt-4'>
+              <div id='wallet-add-funds' className='scroll-mt-4 space-y-4'>
                 <RechargeFormCard
                   topupInfo={topupInfo}
                   presetAmounts={presetAmounts}
@@ -328,6 +381,11 @@ export function Wallet(props: WalletProps) {
                   enableWaffoPancakeTopup={
                     topupInfo?.enable_waffo_pancake_topup
                   }
+                />
+
+                <IdataRiverTopup
+                  onSuccess={fetchUser}
+                  onOpenBilling={() => setBillingDialogOpen(true)}
                 />
               </div>
 
@@ -376,6 +434,7 @@ export function Wallet(props: WalletProps) {
       <BillingHistoryDialog
         open={billingDialogOpen}
         onOpenChange={setBillingDialogOpen}
+        onSuccess={fetchUser}
       />
 
       <CreemConfirmDialog

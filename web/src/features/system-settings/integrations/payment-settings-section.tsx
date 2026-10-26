@@ -81,6 +81,10 @@ import {
   WaffoSettingsSection,
   type WaffoSettingsValues,
 } from './waffo-settings-section'
+import {
+  IdataRiverSettingsSection,
+  type IdataRiverSettingsValues,
+} from './idatariver-settings-section'
 
 function isHttpOriginUrl(value: string) {
   const trimmed = value.trim()
@@ -91,6 +95,32 @@ function isHttpOriginUrl(value: string) {
     const isHttpProtocol = url.protocol === 'http:' || url.protocol === 'https:'
     const hasNoPath = url.pathname === '' || url.pathname === '/'
     return isHttpProtocol && hasNoPath && !url.search && !url.hash
+  } catch {
+    return false
+  }
+}
+
+function isHttpsOriginUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return true
+
+  try {
+    const url = new URL(trimmed)
+    const isHttps = url.protocol === 'https:'
+    const hasNoPath = url.pathname === '' || url.pathname === '/'
+    const hasNoPort = !url.port
+    const hasDot = url.hostname.includes('.')
+    const isNotLocal =
+      !url.hostname.endsWith('.localhost') && url.hostname !== 'localhost'
+    return (
+      isHttps &&
+      hasNoPath &&
+      hasNoPort &&
+      hasDot &&
+      isNotLocal &&
+      !url.search &&
+      !url.hash
+    )
   } catch {
     return false
   }
@@ -178,13 +208,44 @@ const paymentSchema = z.object({
   WaffoPancakeMerchantID: z.string(),
   WaffoPancakePrivateKey: z.string(),
   WaffoPancakeReturnURL: z.string(),
+  IdataRiverEnabled: z.boolean(),
+  IdataRiverApiKey: z.string(),
+  IdataRiverMerchantId: z
+    .string()
+    .refine(
+      (val) => !val.trim() || /^[a-f0-9]{24}$/.test(val.trim()),
+      'Invalid iDataRiver merchant or project ID'
+    ),
+  IdataRiverProjectId: z
+    .string()
+    .refine(
+      (val) => !val.trim() || /^[a-f0-9]{24}$/.test(val.trim()),
+      'Invalid iDataRiver merchant or project ID'
+    ),
+  IdataRiverProducts: z.string().superRefine((value, ctx) => {
+    const error = getJsonError(value, (parsed) => Array.isArray(parsed))
+    if (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: error,
+      })
+    }
+  }),
+  IdataRiverCallbackOrigin: z
+    .string()
+    .refine(
+      isHttpsOriginUrl,
+      'iDataRiver callback origin must be an HTTPS domain origin'
+    ),
 })
 
 type PaymentFormValues = z.infer<typeof paymentSchema>
 type WaffoFormFieldValues = Omit<WaffoSettingsValues, 'WaffoPayMethods'>
 type PaymentBaseFormValues = Omit<
   PaymentFormValues,
-  keyof WaffoFormFieldValues | keyof WaffoPancakeSettingsValues
+  | keyof WaffoFormFieldValues
+  | keyof WaffoPancakeSettingsValues
+  | keyof IdataRiverSettingsValues
 >
 
 const CURRENT_COMPLIANCE_TERMS_VERSION = 'v1'
@@ -204,6 +265,7 @@ type PaymentSettingsSectionProps = {
   waffoPancakeProvisionedStoreID?: string
   waffoPancakeProvisionedProductID?: string
   complianceDefaults: PaymentComplianceDefaults
+  idataRiverDefaultValues: IdataRiverSettingsValues
 }
 
 function parseWaffoPayMethods(value: string): PayMethod[] {
@@ -222,6 +284,7 @@ export function PaymentSettingsSection({
   waffoPancakeProvisionedStoreID,
   waffoPancakeProvisionedProductID,
   complianceDefaults,
+  idataRiverDefaultValues,
 }: PaymentSettingsSectionProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -231,8 +294,14 @@ export function PaymentSettingsSection({
       ...defaultValues,
       ...waffoDefaultValues,
       ...waffoPancakeDefaultValues,
+      ...idataRiverDefaultValues,
     }),
-    [defaultValues, waffoDefaultValues, waffoPancakeDefaultValues]
+    [
+      defaultValues,
+      waffoDefaultValues,
+      waffoPancakeDefaultValues,
+      idataRiverDefaultValues,
+    ]
   )
   const initialRef = React.useRef(initialFormValues)
   const defaultsSignature = React.useMemo(
@@ -246,6 +315,8 @@ export function PaymentSettingsSection({
   const [amountDiscountVisualMode, setAmountDiscountVisualMode] =
     React.useState(true)
   const [creemProductsVisualMode, setCreemProductsVisualMode] =
+    React.useState(true)
+  const [idatariverProductsVisualMode, setIdatariverProductsVisualMode] =
     React.useState(true)
   const [showComplianceDialog, setShowComplianceDialog] = React.useState(false)
   const [waffoPayMethods, setWaffoPayMethods] = React.useState<PayMethod[]>(
@@ -415,6 +486,9 @@ export function PaymentSettingsSection({
       AmountOptions: formatJsonForEditor(parsedDefaults.AmountOptions),
       AmountDiscount: formatJsonForEditor(parsedDefaults.AmountDiscount),
       CreemProducts: formatJsonForEditor(parsedDefaults.CreemProducts),
+      IdataRiverProducts: formatJsonForEditor(
+        parsedDefaults.IdataRiverProducts
+      ),
     })
   }, [defaultsSignature, form])
 
@@ -458,6 +532,14 @@ export function PaymentSettingsSection({
       WaffoPancakePrivateKey: values.WaffoPancakePrivateKey.trim(),
       WaffoPancakeReturnURL: removeTrailingSlash(
         values.WaffoPancakeReturnURL.trim()
+      ),
+      IdataRiverEnabled: values.IdataRiverEnabled,
+      IdataRiverApiKey: values.IdataRiverApiKey.trim(),
+      IdataRiverMerchantId: values.IdataRiverMerchantId.trim(),
+      IdataRiverProjectId: values.IdataRiverProjectId.trim(),
+      IdataRiverProducts: values.IdataRiverProducts.trim(),
+      IdataRiverCallbackOrigin: removeTrailingSlash(
+        values.IdataRiverCallbackOrigin.trim()
       ),
     }
 
@@ -505,6 +587,14 @@ export function PaymentSettingsSection({
       WaffoPancakePrivateKey: initialRef.current.WaffoPancakePrivateKey.trim(),
       WaffoPancakeReturnURL: removeTrailingSlash(
         initialRef.current.WaffoPancakeReturnURL.trim()
+      ),
+      IdataRiverEnabled: initialRef.current.IdataRiverEnabled,
+      IdataRiverApiKey: initialRef.current.IdataRiverApiKey.trim(),
+      IdataRiverMerchantId: initialRef.current.IdataRiverMerchantId.trim(),
+      IdataRiverProjectId: initialRef.current.IdataRiverProjectId.trim(),
+      IdataRiverProducts: initialRef.current.IdataRiverProducts.trim(),
+      IdataRiverCallbackOrigin: removeTrailingSlash(
+        initialRef.current.IdataRiverCallbackOrigin.trim()
       ),
     }
 
@@ -703,6 +793,53 @@ export function PaymentSettingsSection({
       updates.push({ key: 'WaffoPayMethods', value: sanitized.WaffoPayMethods })
     }
 
+    if (sanitized.IdataRiverEnabled !== initial.IdataRiverEnabled) {
+      updates.push({
+        key: 'IdataRiverEnabled',
+        value: sanitized.IdataRiverEnabled ? 'true' : 'false',
+      })
+    }
+
+    if (sanitized.IdataRiverApiKey) {
+      updates.push({
+        key: 'IdataRiverApiKey',
+        value: sanitized.IdataRiverApiKey,
+      })
+    }
+
+    if (sanitized.IdataRiverMerchantId !== initial.IdataRiverMerchantId) {
+      updates.push({
+        key: 'IdataRiverMerchantId',
+        value: sanitized.IdataRiverMerchantId,
+      })
+    }
+
+    if (sanitized.IdataRiverProjectId !== initial.IdataRiverProjectId) {
+      updates.push({
+        key: 'IdataRiverProjectId',
+        value: sanitized.IdataRiverProjectId,
+      })
+    }
+
+    if (
+      normalizeJsonForComparison(sanitized.IdataRiverProducts) !==
+      normalizeJsonForComparison(initial.IdataRiverProducts)
+    ) {
+      updates.push({
+        key: 'IdataRiverProducts',
+        value: sanitized.IdataRiverProducts,
+      })
+    }
+
+    if (
+      sanitized.IdataRiverCallbackOrigin !== initial.IdataRiverCallbackOrigin
+    ) {
+      updates.push({
+        key: 'IdataRiverCallbackOrigin',
+        value: sanitized.IdataRiverCallbackOrigin,
+      })
+    }
+
     const hasWaffoPancakeChanges =
       sanitized.WaffoPancakeMerchantID !== initial.WaffoPancakeMerchantID ||
       sanitized.WaffoPancakePrivateKey.length > 0 ||
@@ -882,11 +1019,12 @@ export function PaymentSettingsSection({
           />
           <Tabs defaultValue='general' className='min-w-0'>
             <div className='overflow-x-auto pb-1'>
-              <TabsList className='grid min-w-[44rem] grid-cols-6'>
+              <TabsList className='grid min-w-[52rem] grid-cols-7'>
                 <TabsTrigger value='general'>{t('General')}</TabsTrigger>
                 <TabsTrigger value='epay'>Epay</TabsTrigger>
                 <TabsTrigger value='stripe'>{t('Stripe')}</TabsTrigger>
                 <TabsTrigger value='creem'>Creem</TabsTrigger>
+                <TabsTrigger value='idatariver'>iDataRiver</TabsTrigger>
                 <TabsTrigger value='waffo-pancake'>Waffo Pancake</TabsTrigger>
                 <TabsTrigger value='waffo'>Waffo</TabsTrigger>
               </TabsList>
@@ -1607,6 +1745,19 @@ export function PaymentSettingsSection({
                   )}
                 />
               </div>
+            </TabsContent>
+
+            <TabsContent
+              value='idatariver'
+              className={paymentTabContentClassName}
+            >
+              <IdataRiverSettingsSection
+                form={form}
+                productsVisualMode={idatariverProductsVisualMode}
+                onToggleProductsVisualMode={() =>
+                  setIdatariverProductsVisualMode(!idatariverProductsVisualMode)
+                }
+              />
             </TabsContent>
 
             <TabsContent

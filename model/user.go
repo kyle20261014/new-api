@@ -1248,11 +1248,9 @@ func ValidateAccessToken(token string) (*User, error) {
 	return user, nil
 }
 
-// GetUserQuota gets quota from Redis first, falls back to DB if needed
+// GetUserQuota always reads the authoritative database wallet balance.
+// fromDB is retained for caller compatibility.
 func GetUserQuota(id int, fromDB bool) (quota int, err error) {
-	if !fromDB && common.RedisEnabled {
-		return getUserQuotaCache(id)
-	}
 	err = DB.Model(&User{}).Where("id = ?", id).Select("quota").Find(&quota).Error
 	if err != nil {
 		return 0, err
@@ -1337,6 +1335,7 @@ func GetUserSetting(id int, fromDB bool) (settingMap dto.UserSetting, err error)
 	return userBase.GetSetting(), nil
 }
 
+// IncreaseUserQuota persists before updating cache; db is retained for compatibility.
 func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
@@ -1344,23 +1343,12 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	if err := common.ValidateWalletQuota(quota); err != nil {
 		return err
 	}
-	if !db && common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
-		gopool.Go(func() {
-			if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
-				common.SysLog(common.LogText("failed to increase user quota: %s", err.Error()))
-			}
-		})
-		return nil
-	}
 	if err := increaseUserQuota(id, quota); err != nil {
 		return err
 	}
-	gopool.Go(func() {
-		if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
-			common.SysLog(common.LogText("failed to increase user quota: %s", err.Error()))
-		}
-	})
+	if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
+		common.SysLog(common.LogText("failed to increase user quota: %s", err.Error()))
+	}
 	return nil
 }
 
@@ -1384,29 +1372,28 @@ func increaseUserQuota(id int, quota int) (err error) {
 	return ErrWalletQuotaLimitExceeded
 }
 
+// DecreaseUserQuota persists settlement debt before updating cache; db is retained for compatibility.
 func DecreaseUserQuota(id int, quota int, db bool) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
-	gopool.Go(func() {
-		err := cacheDecrUserQuota(id, int64(quota))
-		if err != nil {
-			common.SysLog(common.LogText("failed to decrease user quota: %s", err.Error()))
-		}
-	})
-	if !db && common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUserQuota, id, -quota)
-		return nil
+	if err := decreaseUserQuota(id, quota); err != nil {
+		return err
 	}
-	return decreaseUserQuota(id, quota)
+	if err := cacheDecrUserQuota(id, int64(quota)); err != nil {
+		common.SysLog(common.LogText("failed to decrease user quota: %s", err.Error()))
+	}
+	return nil
 }
 
 func decreaseUserQuota(id int, quota int) (err error) {
-	err = DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota - ?", quota)).Error
-	if err != nil {
-		return err
+	// Settlement deltas may create debt; only reservations require sufficient funds.
+	result := DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota - ?", quota))
+	if result.Error != nil || result.RowsAffected == 1 {
+		return result.Error
 	}
-	return err
+	var user User
+	return DB.Select("id").Where("id = ?", id).First(&user).Error
 }
 
 func DeltaUpdateUserQuota(id int, delta int) (err error) {
@@ -1472,23 +1459,6 @@ func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
 	//if err := invalidateUserCache(id); err != nil {
 	//	common.SysError("failed to invalidate user cache: " + err.Error())
 	//}
-}
-
-func updateUserQuotaUsedQuotaAndRequestCount(id int, quota int, usedQuota int, requestCount int) {
-	if quota == 0 && usedQuota == 0 && requestCount == 0 {
-		return
-	}
-
-	err := DB.Model(&User{}).Where("id = ?", id).Updates(
-		map[string]any{
-			"quota":         gorm.Expr("quota + ?", quota),
-			"used_quota":    gorm.Expr("used_quota + ?", usedQuota),
-			"request_count": gorm.Expr("request_count + ?", requestCount),
-		},
-	).Error
-	if err != nil {
-		common.SysLog(common.LogText("failed to batch update user quota, used quota and request count: %s", err.Error()))
-	}
 }
 
 // GetUsernameById gets username from Redis first, falls back to DB if needed

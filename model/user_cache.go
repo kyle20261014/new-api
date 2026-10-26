@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -75,8 +76,8 @@ func populateUserCache(user User) error {
 }
 
 // updateUserCache refreshes non-quota user cache fields.
-// Quota is maintained by atomic quota delta paths and must not be overwritten
-// by stale user snapshots from profile/settings updates.
+// Quota is a best-effort snapshot maintained after database wallet updates;
+// stale profile/settings snapshots must not overwrite it.
 func updateUserCache(user User) error {
 	if !common.RedisEnabled {
 		return nil
@@ -144,7 +145,7 @@ func cacheIncrUserQuota(userId int, delta int64) error {
 	if !common.RedisEnabled {
 		return nil
 	}
-	_, err := cacheApplyUserQuotaDelta(userId, delta)
+	_, err := cacheApplyUserQuotaDelta(context.Background(), userId, delta)
 	return err
 }
 
@@ -152,9 +153,9 @@ func cacheDecrUserQuota(userId int, delta int64) error {
 	return cacheIncrUserQuota(userId, -delta)
 }
 
-// syncCreditUserQuotaCache 在授信事务（充值/兑换等）提交后同步把增量补进缓存
-// 余额。预扣以缓存值为准（存在期间），授信不能绕过它，否则新到账的额度在
-// 缓存过期前不可用；缓存未命中无需处理，下次读取会从已提交的数据库余额水合。
+// syncCreditUserQuotaCache best-effort updates the display snapshot after a
+// credit commits. Wallet admission always uses the database; a missing hash
+// is hydrated from the committed balance on the next cache read.
 func syncCreditUserQuotaCache(userId int, quota int, operation string) {
 	if quota <= 0 {
 		return
@@ -171,14 +172,6 @@ func getUserGroupCache(userId int) (string, error) {
 		return "", err
 	}
 	return cache.Group, nil
-}
-
-func getUserQuotaCache(userId int) (int, error) {
-	cache, err := GetUserCache(userId)
-	if err != nil {
-		return 0, err
-	}
-	return cache.Quota, nil
 }
 
 func getUserNameCache(userId int) (string, error) {

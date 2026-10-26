@@ -23,6 +23,7 @@ type TopUp struct {
 	CreateTime      int64   `json:"create_time"`
 	CompleteTime    int64   `json:"complete_time"`
 	Status          string  `json:"status"`
+	RefundStatus    string  `json:"refund_status,omitempty" gorm:"-"`
 }
 
 const (
@@ -467,6 +468,10 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		// 行级锁，避免并发补单
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
 			return common.NewMessage("Top-up order does not exist")
+		}
+
+		if topUp.PaymentProvider == PaymentProviderIdataRiver {
+			return common.NewMessage("iDataRiver orders must be verified through the payment platform")
 		}
 
 		// 幂等处理：已成功直接返回

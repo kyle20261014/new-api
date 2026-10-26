@@ -250,6 +250,64 @@ export interface UserWalletData {
 export type TopupStatus = 'success' | 'pending' | 'expired'
 
 /**
+ * Refund status for topup records
+ */
+export type TopupRefundStatus =
+  | 'none'
+  | 'recovered'
+  | 'manual_required'
+  | 'refunded_before_credit'
+
+/**
+ * iDataRiver product configuration
+ */
+export interface IdataRiverProduct {
+  sku_id: string
+  name: string
+  price: number
+  quota: number
+  currency: string
+}
+
+/**
+ * iDataRiver products response
+ */
+export interface IdataRiverProductsResponseData {
+  enabled: boolean
+  products: IdataRiverProduct[]
+}
+
+/**
+ * iDataRiver payment method option
+ */
+export interface IdataRiverPaymentMethod {
+  method: string
+  name: string
+}
+
+/**
+ * iDataRiver order projection
+ */
+export interface IdataRiverOrderResponseData {
+  trade_no: string
+  status: string
+  price: number
+  quota: number
+  currency: string
+  payment_methods: IdataRiverPaymentMethod[]
+  refund_status?: string
+}
+
+/**
+ * iDataRiver pay response
+ */
+export interface IdataRiverPayResponseData {
+  pay_url: string
+  pay_currency: string
+  amount: number
+}
+
+/**
  * Topup billing record
  */
 export interface TopupRecord {
@@ -265,12 +323,16 @@ export interface TopupRecord {
   trade_no: string
   /** Payment method type */
   payment_method: string
+  /** Payment provider type */
+  payment_provider?: string
   /** Creation timestamp */
   create_time: number
   /** Completion timestamp */
   complete_time?: number
   /** Payment status */
   status: TopupStatus
+  /** Refund status */
+  refund_status?: TopupRefundStatus
 }
 
 /**

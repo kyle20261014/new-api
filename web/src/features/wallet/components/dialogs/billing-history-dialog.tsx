@@ -16,9 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Copy, Check, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
@@ -45,24 +46,30 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
+import { handleServerError } from '@/lib/handle-server-error'
 
+import { checkIdatarRiverOrder } from '../../api'
 import { useBillingHistory } from '../../hooks/use-billing-history'
 import {
   getStatusConfig,
+  getRefundStatusConfig,
   getPaymentMethodName,
+  formatTopupRecordAmount,
   formatTimestamp,
+  evaluateTopupOutcome,
 } from '../../lib/billing'
 
 interface BillingHistoryDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
 }
 
 export function BillingHistoryDialog({
   open,
   onOpenChange,
+  onSuccess,
 }: BillingHistoryDialogProps) {
   const { t } = useTranslation()
   const {
@@ -78,9 +85,11 @@ export function BillingHistoryDialog({
     handlePageSizeChange,
     handleSearch,
     handleCompleteOrder,
+    refresh,
   } = useBillingHistory()
 
   const [confirmTradeNo, setConfirmTradeNo] = useState<string | null>(null)
+  const [checkingTradeNo, setCheckingTradeNo] = useState<string | null>(null)
   const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
 
   const totalPages = Math.ceil(total / pageSize)
@@ -91,6 +100,48 @@ export function BillingHistoryDialog({
       if (success) {
         setConfirmTradeNo(null)
       }
+    }
+  }
+
+  const handleCheckOrder = async (tradeNo: string) => {
+    setCheckingTradeNo(tradeNo)
+    try {
+      const res = await checkIdatarRiverOrder(tradeNo)
+      if (res.success && res.data) {
+        const outcome = evaluateTopupOutcome(
+          res.data.status,
+          res.data.refund_status
+        )
+        if (outcome.kind === 'success') {
+          toast.success(t(outcome.messageKey))
+          await refresh()
+          onSuccess?.()
+        } else if (
+          outcome.kind === 'refunded_recovered' ||
+          outcome.kind === 'refunded_before_credit'
+        ) {
+          toast.info(t(outcome.messageKey))
+          await refresh()
+          onSuccess?.()
+        } else if (outcome.kind === 'refunded_manual') {
+          toast.warning(t(outcome.messageKey))
+          await refresh()
+        } else if (outcome.kind === 'expired') {
+          toast.warning(t(outcome.messageKey))
+          await refresh()
+        } else if (outcome.kind === 'pending') {
+          toast.info(t(outcome.messageKey))
+        } else {
+          toast.info(t(outcome.messageKey, { status: res.data.status }))
+          await refresh()
+        }
+      } else {
+        handleServerError(res, t('Failed to check order status'))
+      }
+    } catch (error) {
+      handleServerError(error, t('Failed to check order status'))
+    } finally {
+      setCheckingTradeNo(null)
     }
   }
 
@@ -188,6 +239,11 @@ export function BillingHistoryDialog({
               <div className='space-y-3'>
                 {records.map((record) => {
                   const statusConfig = getStatusConfig(record.status)
+                  const refundConfig = getRefundStatusConfig(record.refund_status)
+                  const isIdataRiverOrder =
+                    record.payment_provider === 'idatariver' ||
+                    record.payment_method === 'idatariver'
+
                   return (
                     <div
                       key={record.id}
@@ -196,7 +252,7 @@ export function BillingHistoryDialog({
                       {/* Header Row */}
                       <div className='flex items-start justify-between gap-2'>
                         <div className='flex-1 space-y-1'>
-                          <div className='flex min-w-0 items-center gap-2'>
+                          <div className='flex min-w-0 flex-wrap items-center gap-2'>
                             <code className='text-foreground truncate font-mono text-sm'>
                               {record.trade_no}
                             </code>
@@ -205,6 +261,7 @@ export function BillingHistoryDialog({
                               size='sm'
                               className='h-5 w-5 p-0'
                               onClick={() => copyToClipboard(record.trade_no)}
+                              aria-label={t('Copy order number')}
                             >
                               {copiedText === record.trade_no ? (
                                 <Check className='h-3 w-3' />
@@ -212,6 +269,17 @@ export function BillingHistoryDialog({
                                 <Copy className='h-3 w-3' />
                               )}
                             </Button>
+                            {record.payment_provider && (
+                              <StatusBadge
+                                label={getPaymentMethodName(
+                                  record.payment_provider,
+                                  t
+                                )}
+                                variant='neutral'
+                                size='sm'
+                                copyable={false}
+                              />
+                            )}
                             {isAdmin && record.user_id != null && (
                               <StatusBadge
                                 label={`${t('User ID')}: ${record.user_id}`}
@@ -225,12 +293,22 @@ export function BillingHistoryDialog({
                             {formatTimestamp(record.create_time)}
                           </div>
                         </div>
-                        <StatusBadge
-                          label={t(statusConfig.label)}
-                          variant={statusConfig.variant}
-                          showDot
-                          copyable={false}
-                        />
+                        <div className='flex flex-col items-end gap-1.5 sm:flex-row sm:items-center'>
+                          {refundConfig && (
+                            <StatusBadge
+                              label={t(refundConfig.labelKey)}
+                              variant={refundConfig.variant}
+                              showDot
+                              copyable={false}
+                            />
+                          )}
+                          <StatusBadge
+                            label={t(statusConfig.label)}
+                            variant={statusConfig.variant}
+                            showDot
+                            copyable={false}
+                          />
+                        </div>
                       </div>
 
                       {/* Details Grid */}
@@ -248,11 +326,7 @@ export function BillingHistoryDialog({
                             {t('Amount')}
                           </Label>
                           <div className='text-sm font-semibold'>
-                            {formatCurrencyFromUSD(record.amount, {
-                              digitsLarge: 2,
-                              digitsSmall: 2,
-                              abbreviate: false,
-                            })}
+                            {formatTopupRecordAmount(record)}
                           </div>
                         </div>
                         <div className='space-y-1'>
@@ -265,17 +339,32 @@ export function BillingHistoryDialog({
                         </div>
                       </div>
 
-                      {/* Admin Actions */}
-                      {isAdmin && record.status === 'pending' && (
-                        <div className='mt-4 flex justify-end'>
-                          <Button
-                            size='sm'
-                            variant='outline'
-                            onClick={() => setConfirmTradeNo(record.trade_no)}
-                            disabled={completing}
-                          >
-                            {t('Complete Order')}
-                          </Button>
+                      {/* Order Actions */}
+                      {record.status === 'pending' && (
+                        <div className='mt-4 flex flex-wrap items-center justify-end gap-2'>
+                          {isIdataRiverOrder && (
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() => handleCheckOrder(record.trade_no)}
+                              disabled={checkingTradeNo === record.trade_no}
+                            >
+                              {checkingTradeNo === record.trade_no && (
+                                <Loader2 className='mr-1.5 h-3.5 w-3.5 animate-spin' />
+                              )}
+                              {t('Check Status')}
+                            </Button>
+                          )}
+                          {isAdmin && (
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() => setConfirmTradeNo(record.trade_no)}
+                              disabled={completing}
+                            >
+                              {t('Complete Order')}
+                            </Button>
+                          )}
                         </div>
                       )}
                     </div>

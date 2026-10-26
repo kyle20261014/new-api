@@ -101,6 +101,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"enable_online_topup":              isEpayTopUpEnabled(),
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
 		"enable_creem_topup":               isCreemTopUpEnabled(),
+		"enable_idatariver_topup":          isIdataRiverTopUpEnabled(),
 		"enable_waffo_topup":               enableWaffo,
 		"enable_waffo_pancake_topup":       enableWaffoPancake,
 		"enable_redemption":                complianceConfirmed,
@@ -545,6 +546,10 @@ func GetUserTopUps(c *gin.Context) {
 		return
 	}
 
+	if err := model.PopulateIdataRiverRefundStatus(topups); err != nil {
+		common.ApiErrorT(c, "Failed to load iDataRiver order")
+		return
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(topups)
 	common.ApiSuccess(c, pageInfo)
@@ -570,6 +575,10 @@ func GetAllTopUps(c *gin.Context) {
 		return
 	}
 
+	if err := model.PopulateIdataRiverRefundStatus(topups); err != nil {
+		common.ApiErrorT(c, "Failed to load iDataRiver order")
+		return
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(topups)
 	common.ApiSuccess(c, pageInfo)

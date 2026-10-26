@@ -39,6 +39,9 @@ import type {
   WaffoPaymentResponse,
   WaffoPancakePaymentRequest,
   WaffoPancakePaymentResponse,
+  IdataRiverProductsResponseData,
+  IdataRiverOrderResponseData,
+  IdataRiverPayResponseData,
 } from './types'
 
 // ============================================================================
@@ -244,5 +247,64 @@ export async function completeOrder(
   request: CompleteOrderRequest
 ): Promise<ApiResponse> {
   const res = await api.post('/api/user/topup/complete', request)
+  return res.data
+}
+
+/**
+ * Get iDataRiver products and availability
+ */
+export async function getIdatarRiverProducts(): Promise<
+  ApiResponse<IdataRiverProductsResponseData>
+> {
+  const res = await api.get('/api/user/idatariver/products')
+  return res.data
+}
+
+/**
+ * Create an iDataRiver top-up order
+ */
+export async function createIdatarRiverOrder(
+  sku_id: string
+): Promise<ApiResponse<IdataRiverOrderResponseData>> {
+  const res = await api.post(
+    '/api/user/idatariver/order',
+    { sku_id },
+    {
+      skipBusinessError: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}
+
+/**
+ * Request iDataRiver payment URL
+ */
+export async function payIdatarRiverOrder(
+  trade_no: string,
+  method: string
+): Promise<ApiResponse<IdataRiverPayResponseData>> {
+  const res = await api.post(
+    '/api/user/idatariver/pay',
+    { trade_no, method },
+    {
+      skipBusinessError: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}
+
+/**
+ * Check iDataRiver order status (reconcile)
+ */
+export async function checkIdatarRiverOrder(
+  trade_no: string
+): Promise<ApiResponse<IdataRiverOrderResponseData>> {
+  const res = await api.post(
+    '/api/user/idatariver/check',
+    { trade_no },
+    {
+      skipBusinessError: true,
+    } as Record<string, unknown>
+  )
   return res.data
 }

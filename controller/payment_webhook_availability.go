@@ -92,6 +92,11 @@ func isWaffoPancakeWebhookEnabled() bool {
 	return isWaffoPancakeTopUpEnabled()
 }
 
+func isIdataRiverTopUpEnabled() bool {
+	cfg := setting.GetIdataRiverConfig()
+	return isPaymentComplianceConfirmed() && cfg.Enabled && cfg.Configured()
+}
+
 func isEpayTopUpEnabled() bool {
 	if !isPaymentComplianceConfirmed() {
 		return false

@@ -61,7 +61,7 @@ func GetDashboardStats(ctx context.Context, now time.Time) (*DashboardStats, err
 		switch order.PaymentProvider {
 		case PaymentProviderStripe:
 			credit = decimal.NewFromFloat(order.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
-		case PaymentProviderCreem:
+		case PaymentProviderCreem, PaymentProviderIdataRiver:
 			credit = decimal.NewFromInt(order.Amount)
 		}
 		quota, err := common.WalletQuotaFromDecimalStrict(credit)

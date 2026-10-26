@@ -354,6 +354,7 @@ func migrateDB() error {
 		&Log{},
 		&Midjourney{},
 		&TopUp{},
+		&IdataRiverOrder{},
 		&QuotaData{},
 		&Task{},
 		&TaskPlugin{},

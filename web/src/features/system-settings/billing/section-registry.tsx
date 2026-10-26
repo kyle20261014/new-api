@@ -185,6 +185,20 @@ const BILLING_SECTIONS = [
           confirmedAt: settings['payment_setting.compliance_confirmed_at'] ?? 0,
           confirmedBy: settings['payment_setting.compliance_confirmed_by'] ?? 0,
         }}
+        idataRiverDefaultValues={{
+          IdataRiverEnabled: settings.IdataRiverEnabled ?? false,
+          IdataRiverApiKey: '',
+          IdataRiverMerchantId:
+            settings.IdataRiverMerchantId ?? '6adaf86e4a9d53fa7ffbfa10',
+          IdataRiverProjectId:
+            settings.IdataRiverProjectId ?? '6adb0ecdc5c1b963f6862493',
+          IdataRiverProducts:
+            settings.IdataRiverProducts ??
+            '[{"sku_id":"6adb0f2e7cea3a5b4c41745e","name":"支付10U","price":10,"quota":10},{"sku_id":"6adb0f69c5c1b963f68624a4","name":"支付20U","price":20,"quota":20},{"sku_id":"6adb0f83c5c1b963f68624a5","name":"支付30U","price":30,"quota":30},{"sku_id":"6adc23b47cea3a5b4c418832","name":"支付50U","price":50,"quota":50},{"sku_id":"6adc244cc5c1b963f68638ba","name":"100U","price":100,"quota":100}]',
+          IdataRiverCallbackOrigin:
+            settings.IdataRiverCallbackOrigin ??
+            'https://mw.vistalineglobal.com',
+        }}
       />
     ),
   },
