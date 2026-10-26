@@ -145,7 +145,13 @@ func TestIdataRiverCheckoutContract(t *testing.T) {
 			assert.Equal(t, "https", req.URL.Scheme)
 			assert.Equal(t, "open.idatariver.com", req.URL.Host)
 			assert.Equal(t, "Bearer test-secret-do-not-leak", req.Header.Get("Authorization"))
-			assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
+			// The platform rejects a bodyless GET that declares a JSON body with
+			// {"code":1000,"msg":"exception"}, so only bodied POSTs may set it.
+			if req.Method == http.MethodPost {
+				assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
+			} else {
+				assert.Empty(t, req.Header.Get("Content-Type"))
+			}
 			var result any
 			switch req.URL.Path {
 			case "/mapi/project/detail":
@@ -188,13 +194,18 @@ func TestIdataRiverCheckoutContract(t *testing.T) {
 			case "/mapi/order/info":
 				require.NoError(t, db.Where("trade_no = ?", saved.TradeNo).First(&saved).Error)
 				require.NotNil(t, saved.PlatformOrderID)
-				result = map[string]any{"id": *saved.PlatformOrderID, "merchant": cfg.MerchantID, "project": map[string]any{"id": cfg.ProjectID}, "sku": map[string]any{"id": cfg.Products[0].SKUID}, "quantity": 1, "oriPrice": 10, "price": 10, "status": "NEW", "mPayments": []any{map[string]any{"method": "alipay", "name": "Alipay", "enabled": true}}}
+				result = map[string]any{"id": *saved.PlatformOrderID, "merchant": cfg.MerchantID, "project": map[string]any{"id": cfg.ProjectID}, "sku": map[string]any{"id": cfg.Products[0].SKUID}, "quantity": 1, "oriPrice": 10, "price": 10, "status": "NEW", "mPayments": []any{map[string]any{"method": "alipay", "name": "Alipay", "enabled": true}, map[string]any{"method": "crypto", "name": "crypto", "enabled": true}}}
 			case "/mapi/order/pay":
 				var body map[string]any
 				require.NoError(t, common.DecodeJson(req.Body, &body))
 				assert.Equal(t, *saved.PlatformOrderID, body["id"])
 				assert.Equal(t, cfg.CallbackOrigin+"/api/user/idatariver/notify", body["callbackUrl"])
-				result = map[string]any{"payUrl": "https://pay.example/checkout", "payCurrency": "CNY", "amount": 72.5}
+				// Crypto checkout returns null payCurrency/amount; that must stay payable.
+				if body["method"] == "crypto" {
+					result = map[string]any{"payUrl": "https://pay.example/crypto", "payCurrency": nil, "amount": nil}
+				} else {
+					result = map[string]any{"payUrl": "https://pay.example/checkout", "payCurrency": "CNY", "amount": 72.5}
+				}
 			default:
 				t.Errorf("unexpected endpoint %s", req.URL.Path)
 			}
@@ -213,7 +224,7 @@ func TestIdataRiverCheckoutContract(t *testing.T) {
 	assert.Equal(t, float64(10), data["quota"])
 	assert.Equal(t, "USD", data["currency"])
 	assert.Equal(t, "pending", data["status"])
-	assert.Len(t, data["payment_methods"], 1)
+	assert.Len(t, data["payment_methods"], 2)
 	assert.NotContains(t, fmt.Sprint(created), "test-secret")
 	before := calls
 	_, otherOwner := idataRiverRequest(t, CheckIdataRiverOrder, user.Id+1000000, fmt.Sprintf(`{"trade_no":%q}`, saved.TradeNo))
@@ -222,6 +233,9 @@ func TestIdataRiverCheckoutContract(t *testing.T) {
 	_, pay := idataRiverRequest(t, PayIdataRiverOrder, user.Id, fmt.Sprintf(`{"trade_no":%q,"method":"alipay"}`, saved.TradeNo))
 	require.Equal(t, true, pay["success"], pay)
 	assert.Equal(t, "https://pay.example/checkout", pay["data"].(map[string]any)["pay_url"])
+	_, cryptoPay := idataRiverRequest(t, PayIdataRiverOrder, user.Id, fmt.Sprintf(`{"trade_no":%q,"method":"crypto"}`, saved.TradeNo))
+	require.Equal(t, true, cryptoPay["success"], cryptoPay)
+	assert.Equal(t, "https://pay.example/crypto", cryptoPay["data"].(map[string]any)["pay_url"])
 	require.Error(t, model.ManualCompleteTopUp(saved.TradeNo, ""))
 	for _, fault := range []string{"zero stock", "offline", "foreign owner", "foreign project", "dynamic", "changed price"} {
 		t.Run(fault, func(t *testing.T) {

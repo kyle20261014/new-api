@@ -320,6 +320,84 @@ describe('IdataRiverTopup component', () => {
     }
   })
 
+  it('opens crypto checkout that reports no platform amount or currency', async () => {
+    const user = userEvent.setup()
+
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        success: true,
+        message: '',
+        data: {
+          enabled: true,
+          products: [
+            {
+              sku_id: 'crypto-sku',
+              name: 'Crypto Package',
+              price: 10,
+              quota: 10,
+              currency: 'USD',
+            },
+          ],
+        },
+      },
+    })
+
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    vi.spyOn(api, 'post').mockImplementation(async (url: string) => {
+      if (url === '/api/user/idatariver/pay') {
+        return {
+          data: {
+            success: true,
+            message: '',
+            data: {
+              pay_url: 'https://pay.idatariver.com/cashier/crypto',
+              pay_currency: '',
+              amount: 0,
+            },
+          },
+        }
+      }
+      return {
+        data: {
+          success: true,
+          message: '',
+          data: {
+            trade_no: 'TR-CRYPTO-1',
+            status: 'pending',
+            price: 10,
+            quota: 10,
+            currency: 'USD',
+            payment_methods: [{ method: 'crypto', name: 'crypto' }],
+            refund_status: 'none',
+          },
+        },
+      }
+    })
+
+    render(<IdataRiverTopup />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Crypto Package')).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /Crypto Package/i }))
+    await waitFor(() => {
+      expect(screen.getByText('TR-CRYPTO-1')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /Proceed to Pay/i }))
+
+    await waitFor(() => {
+      expect(openSpy).toHaveBeenCalledWith(
+        'https://pay.idatariver.com/cashier/crypto',
+        '_blank',
+        'noopener,noreferrer'
+      )
+      expect(
+        screen.queryByText('Platform Payable Amount')
+      ).not.toBeInTheDocument()
+    })
+  })
+
   it('allows manual order check and handles manual_required warning', async () => {
     const user = userEvent.setup()
     const toastWarningSpy = vi.spyOn(toast, 'warning')

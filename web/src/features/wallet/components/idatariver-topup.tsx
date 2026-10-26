@@ -451,8 +451,12 @@ export function IdataRiverTopup(props: IdataRiverTopupProps) {
                 </span>
               </div>
 
-              {/* Visibly distinct platform payable amount/currency (A3 requirement) */}
-              {payData && (
+              {/* Visibly distinct platform payable amount/currency (A3 requirement).
+                  Crypto checkout reports neither, so the row only shows when both exist. */}
+              {payData &&
+                typeof payData.amount === 'number' &&
+                payData.amount > 0 &&
+                payData.pay_currency && (
                 <div className="flex items-center justify-between border-t border-border/40 pt-2">
                   <span className="text-foreground font-medium">
                     {t('Platform Payable Amount')}

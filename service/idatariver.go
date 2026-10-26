@@ -57,7 +57,11 @@ func (client *IdataRiverClient) request(ctx context.Context, method, path string
 		return common.NewMessage("iDataRiver is not configured")
 	}
 	req.Header.Set("Authorization", "Bearer "+client.APIKey)
-	req.Header.Set("Content-Type", "application/json")
+	// The platform answers {"code":1000,"msg":"exception"} to a GET that declares
+	// a JSON body but sends none, so bound GETs must not set Content-Type.
+	if len(encoded) > 0 {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("X-Idr-Locale", client.Locale)
 	response, err := client.HTTPClient.Do(req)
 	if err != nil {
@@ -212,8 +216,16 @@ func (client *IdataRiverClient) Pay(ctx context.Context, snapshot *model.IdataRi
 		return nil, err
 	}
 	u, err := url.Parse(result.URL)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || result.Currency == "" || len(result.Currency) > 20 || !result.Amount.IsPositive() || result.Amount.GreaterThan(decimal.NewFromInt(1e12)) {
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || len(result.Currency) > 20 {
 		return nil, common.NewMessage("Invalid iDataRiver payment link")
+	}
+	// Crypto checkout reports payCurrency and amount as null; both are display
+	// values only (settlement stays on the verified order snapshot), so check
+	// them when the platform supplies them instead of requiring them.
+	if result.Currency != "" || !result.Amount.IsZero() {
+		if result.Currency == "" || !result.Amount.IsPositive() || result.Amount.GreaterThan(decimal.NewFromInt(1e12)) {
+			return nil, common.NewMessage("Invalid iDataRiver payment link")
+		}
 	}
 	return &result, nil
 }
