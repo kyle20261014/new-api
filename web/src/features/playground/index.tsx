@@ -25,7 +25,11 @@ import {
   usePlaygroundState,
 } from './hooks'
 
-export function Playground() {
+interface PlaygroundProps {
+  initialModel?: string
+}
+
+export function Playground(props: PlaygroundProps = {}) {
   const {
     config,
     parameterEnabled,
@@ -69,6 +73,7 @@ export function Playground() {
   const { isLoadingModels } = usePlaygroundOptions({
     currentGroup: config.group,
     currentModel: config.model,
+    targetModel: props.initialModel,
     setGroups,
     setModels,
     updateConfig,

@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
+import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { CopyButton } from '@/components/copy-button'
 import {
   BadgeCell,
   BadgeListCell,
@@ -26,19 +28,25 @@ import {
 } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
+import { Button } from '@/components/ui/button'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { parseTags } from '../lib/filters'
+import { isPlaygroundChatModel } from '../lib/model-helpers'
 import type { PricingModel } from '../types'
 import { CachedPriceCell } from './cached-price-cell'
+import { ChatEntranceButton } from './chat-entrance-button'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
+import { ModelDiscountBadge } from './model-discount-badge'
 import { ModelPriceCell, type ModelPriceCellOptions } from './model-price-cell'
 
 // ----------------------------------------------------------------------------
 // Pricing Table Columns
 // ----------------------------------------------------------------------------
 
-export type PricingColumnsOptions = ModelPriceCellOptions
+export type PricingColumnsOptions = ModelPriceCellOptions & {
+  onModelClick?: (modelName: string) => void
+}
 
 export function usePricingColumns(
   options: PricingColumnsOptions = {}
@@ -75,9 +83,16 @@ export function usePricingColumns(
       accessorKey: 'quota_type',
       header: t('Type'),
       cell: ({ row }) => (
-        <ModelBillingModeBadge model={row.original} className='-ml-1.5' />
+        <div className='flex flex-wrap items-center gap-1.5'>
+          <ModelBillingModeBadge model={row.original} className='-ml-1.5' />
+          <ModelDiscountBadge
+            model={row.original}
+            selectedGroup={options.selectedGroup}
+            appearance='compact'
+          />
+        </div>
       ),
-      size: 110,
+      size: 130,
       enableSorting: false,
     },
 
@@ -198,6 +213,45 @@ export function usePricingColumns(
         )
       },
       size: 130,
+      enableSorting: false,
+    },
+
+    // Actions column
+    {
+      id: 'actions',
+      header: () => <span className='sr-only'>{t('Actions')}</span>,
+      cell: ({ row }) => {
+        const model = row.original
+        return (
+          <div
+            className='flex items-center justify-end gap-1'
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CopyButton
+              value={model.model_name}
+              tooltip={t('Copy model name')}
+              className='size-7'
+              iconClassName='size-3.5'
+            />
+            {isPlaygroundChatModel(model) && (
+              <ChatEntranceButton model={model} />
+            )}
+            {options.onModelClick && (
+              <Button
+                variant='ghost'
+                size='icon'
+                className='size-7 shrink-0'
+                onClick={() => options.onModelClick?.(model.model_name)}
+                title={t('Details')}
+                aria-label={t('Details')}
+              >
+                <ChevronRight aria-hidden className='size-3.5' />
+              </Button>
+            )}
+          </div>
+        )
+      },
+      size: 100,
       enableSorting: false,
     },
   ]

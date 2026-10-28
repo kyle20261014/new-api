@@ -57,6 +57,29 @@ export function getGroupFallback(
   )
 }
 
+/**
+ * Sort groups stably by ratio ascending.
+ * Identical ratios preserve the original array order.
+ */
+export function sortGroupsByRatio(groups: GroupOption[]): GroupOption[] {
+  return groups
+    .map((group, index) => ({
+      group,
+      index,
+      ratio:
+        typeof group.ratio === 'number'
+          ? group.ratio
+          : Number(group.ratio) || 1,
+    }))
+    .sort((a, b) => {
+      if (a.ratio !== b.ratio) {
+        return a.ratio - b.ratio
+      }
+      return a.index - b.index
+    })
+    .map((item) => item.group)
+}
+
 export function getOptionLoadErrorMessage(
   error: unknown,
   fallbackMessage: string

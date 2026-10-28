@@ -29,3 +29,5 @@ export {
   ModelDetailsDrawer,
 } from './model-details'
 export { PricingTable } from './pricing-table'
+export { ModelDiscountBadge } from './model-discount-badge'
+export { ChatEntranceButton } from './chat-entrance-button'

@@ -37,11 +37,13 @@ import {
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { isPlaygroundChatModel, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, PriceType, TokenUnit } from '../types'
+import { ChatEntranceButton } from './chat-entrance-button'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
+import { ModelDiscountBadge } from './model-discount-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
 
 export interface ModelCardProps {
@@ -294,12 +296,17 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             </p>
           )}
         </div>
-        <CopyButton
-          value={props.model.model_name}
-          tooltip={t('Copy model name')}
-          className='size-7'
-          iconClassName='size-3.5'
-        />
+        <div className='flex shrink-0 items-center gap-1'>
+          <CopyButton
+            value={props.model.model_name}
+            tooltip={t('Copy model name')}
+            className='size-7'
+            iconClassName='size-3.5'
+          />
+          {isPlaygroundChatModel(props.model) && (
+            <ChatEntranceButton model={props.model} />
+          )}
+        </div>
       </CardHeader>
       <CardContent className='flex flex-1 flex-col gap-3'>
         <div className='flex min-w-0 flex-col gap-1.5'>
@@ -327,9 +334,16 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         <div
           role='group'
           aria-label={t('Pricing')}
-          className='mt-auto flex min-w-0 flex-col gap-1.5'
+          className='mt-auto flex min-w-0 flex-col gap-2'
         >
-          <ModelBillingModeBadge model={props.model} appearance='caption' />
+          <div className='flex flex-wrap items-center justify-between gap-2'>
+            <ModelBillingModeBadge model={props.model} appearance='caption' />
+            <ModelDiscountBadge
+              model={props.model}
+              selectedGroup={props.selectedGroup}
+              appearance='card'
+            />
+          </div>
           {dynamicSummary?.providerCount && (
             <span className='text-muted-foreground text-xs break-words'>
               {t('{{count}} providers', {

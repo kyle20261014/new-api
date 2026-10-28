@@ -16,22 +16,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 
 import { useStatus } from '@/hooks/use-status'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getPricing } from '../api'
+import type { PricingData } from '../types'
 
 export function usePricingData(enabled = true) {
+  const queryClient = useQueryClient()
   const { status } = useStatus()
+  const user = useAuthStore((s) => s.auth.user)
+  const authKey = user?.id ? `user:${user.id}:${user.group || ''}` : 'guest'
 
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['pricing'],
+  const { data, isLoading, error, refetch } = useQuery<PricingData>({
+    queryKey: ['pricing', authKey],
     queryFn: async () => requireServerSuccess(await getPricing()),
     staleTime: 5 * 60 * 1000,
     enabled,
+    initialData: () => queryClient.getQueryData<PricingData>(['pricing']),
   })
 
   // Ensure rates never reach zero to prevent division errors
@@ -60,6 +66,7 @@ export function usePricingData(enabled = true) {
         vendor_icon: vendor?.icon,
         vendor_description: vendor?.description,
         group_ratio: data.group_ratio,
+        usable_group: data.usable_group,
       }
     })
   }, [data])
