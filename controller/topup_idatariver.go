@@ -214,10 +214,27 @@ func IdataRiverNotify(c *gin.Context) {
 	defer cancel()
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
 	var notification struct {
-		ID    string `json:"id"`
-		Event string `json:"event"`
+		ID     string `json:"id"`
+		Event  string `json:"event"`
+		Code   *int   `json:"code"`
+		Result *struct {
+			ID string `json:"id"`
+		} `json:"result"`
 	}
-	if common.DecodeJson(c.Request.Body, &notification) != nil || notification.ID == "" || len(notification.ID) > 64 {
+	if common.DecodeJson(c.Request.Body, &notification) != nil {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	// Payment callbacks wrap the order in result; retain flat event-hook support.
+	// Only the ID is used here. Status and amounts still come from GetOrder.
+	if notification.Code != nil || notification.Result != nil {
+		if notification.Code == nil || *notification.Code != 0 || notification.Result == nil || (notification.ID != "" && notification.ID != notification.Result.ID) {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		notification.ID = notification.Result.ID
+	}
+	if notification.ID == "" || len(notification.ID) > 64 {
 		c.Status(http.StatusBadRequest)
 		return
 	}

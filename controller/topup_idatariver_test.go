@@ -507,10 +507,86 @@ func TestIdataRiverCallbackAndDisabledOwnerCheck(t *testing.T) {
 	recorder, _ = idataRiverRequest(t, IdataRiverNotify, 0, fmt.Sprintf(`{"id":%q,"event":"ORDER_COMPLETED"}`, *snapshot.PlatformOrderID))
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	status = "REFUND"
-	recorder, _ = idataRiverRequest(t, IdataRiverNotify, 0, fmt.Sprintf(`{"id":%q,"event":"ORDER_REFUND"}`, *snapshot.PlatformOrderID))
-	assert.Equal(t, http.StatusOK, recorder.Code)
+	for range 2 {
+		recorder, _ = idataRiverRequest(t, IdataRiverNotify, 0, fmt.Sprintf(`{"code":0,"result":{"id":%q},"event":"ORDER_REFUND"}`, *snapshot.PlatformOrderID))
+		assert.Equal(t, http.StatusOK, recorder.Code)
+	}
 	require.NoError(t, db.First(&current, user.Id).Error)
 	assert.Zero(t, current.Quota)
+	var refundLogs int64
+	require.NoError(t, db.Model(&model.Log{}).Where("user_id = ? AND type = ?", user.Id, model.LogTypeRefund).Count(&refundLogs).Error)
+	assert.EqualValues(t, 1, refundLogs)
+}
+
+func TestIdataRiverCallbackEnvelope(t *testing.T) {
+	db := idataRiverFixture(t, "sqlite")
+	for _, test := range []struct {
+		name      string
+		body      string
+		status    int
+		upstream  string
+		wantCalls int
+		wantQuota bool
+	}{
+		{name: "completed", body: `{"code":0,"result":{"id":%q,"status":"REFUND","price":0},"event":"ORDER_COMPLETED"}`, status: http.StatusOK, upstream: "DONE", wantCalls: 2, wantQuota: true},
+		{name: "without event", body: `{"code":0,"result":{"id":%q}}`, status: http.StatusOK, upstream: "DONE", wantCalls: 2, wantQuota: true},
+		{name: "unpaid", body: `{"code":0,"result":{"id":%q,"status":"DONE","price":10},"event":"ORDER_COMPLETED"}`, status: http.StatusOK, upstream: "NEW", wantCalls: 2},
+		{name: "failed code", body: `{"code":1,"result":{"id":%q},"event":"ORDER_COMPLETED"}`, status: http.StatusBadRequest},
+		{name: "missing code", body: `{"result":{"id":%q},"event":"ORDER_COMPLETED"}`, status: http.StatusBadRequest},
+		{name: "null code", body: `{"code":null,"result":{"id":%q}}`, status: http.StatusBadRequest},
+		{name: "invalid code type", body: `{"code":"0","result":{"id":%q}}`, status: http.StatusBadRequest},
+		{name: "missing result", body: `{"code":0,"id":%q}`, status: http.StatusBadRequest},
+		{name: "no flat fallback", body: `{"code":0,"id":%q,"result":{"id":""}}`, status: http.StatusBadRequest},
+		{name: "oversized id", body: `{"code":0,"result":{"id":"` + strings.Repeat("x", 65) + `"},"unused":%q}`, status: http.StatusBadRequest},
+		{name: "missing id", body: `{"code":0,"result":null,"event":"ORDER_COMPLETED","unused":%q}`, status: http.StatusBadRequest},
+		{name: "invalid id type", body: `{"code":0,"result":{"id":42},"unused":%q}`, status: http.StatusBadRequest},
+		{name: "conflicting ids", body: `{"id":"other-order","code":0,"result":{"id":%q},"event":"ORDER_COMPLETED"}`, status: http.StatusBadRequest},
+		{name: "unknown event", body: `{"code":0,"result":{"id":%q},"event":"UNDEFINED"}`, status: http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			user := idataRiverUser(t, db, 0)
+			snapshot := idataRiverSavedOrder(t, user)
+			calls := 0
+			newIdataRiverClient = func(key, language string) *service.IdataRiverClient {
+				return &service.IdataRiverClient{APIKey: key, HTTPClient: &http.Client{Transport: idataRiverTransport(func(req *http.Request) (*http.Response, error) {
+					calls++
+					assert.Equal(t, http.MethodGet, req.Method)
+					assert.Equal(t, "/mapi/order/info", req.URL.Path)
+					assert.Equal(t, *snapshot.PlatformOrderID, req.URL.Query().Get("id"))
+					raw, err := common.Marshal(map[string]any{"code": 0, "result": map[string]any{"id": *snapshot.PlatformOrderID, "merchant": snapshot.MerchantID, "project": map[string]any{"id": snapshot.ProjectID}, "sku": map[string]any{"id": snapshot.SKUID}, "quantity": 1, "oriPrice": 10, "price": 10, "status": test.upstream}})
+					require.NoError(t, err)
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
+				})}}
+			}
+			router := gin.New()
+			router.POST("/api/user/idatariver/notify", middleware.AnonymousRequestBodyLimit(), IdataRiverNotify)
+			for range 2 {
+				response := httptest.NewRecorder()
+				request := httptest.NewRequest(http.MethodPost, "/api/user/idatariver/notify", strings.NewReader(fmt.Sprintf(test.body, *snapshot.PlatformOrderID)))
+				request.Header.Set("Content-Type", "application/json")
+				router.ServeHTTP(response, request)
+				assert.Equal(t, test.status, response.Code)
+				var current model.User
+				require.NoError(t, db.First(&current, user.Id).Error)
+				topup, saved, err := model.GetIdataRiverOrder(context.Background(), snapshot.TradeNo, user.Id)
+				require.NoError(t, err)
+				var logs int64
+				require.NoError(t, db.Model(&model.Log{}).Where("user_id = ? AND type = ?", user.Id, model.LogTypeTopup).Count(&logs).Error)
+				if test.wantQuota {
+					assert.Equal(t, snapshot.Quota, current.Quota)
+					assert.Equal(t, snapshot.Quota, saved.CreditedQuota)
+					assert.Equal(t, common.TopUpStatusSuccess, topup.Status)
+					assert.EqualValues(t, 1, logs)
+				} else {
+					assert.Zero(t, current.Quota)
+					assert.Zero(t, saved.CreditedQuota)
+					assert.Equal(t, common.TopUpStatusPending, topup.Status)
+					assert.Zero(t, logs)
+				}
+			}
+			assert.Equal(t, test.wantCalls, calls)
+		})
+	}
 }
 
 func TestIdataRiverCallbackDeadline(t *testing.T) {
