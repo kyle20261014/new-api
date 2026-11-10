@@ -44,3 +44,38 @@ relaykit/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go
 go.work
 go.work.sum
+.vfox/
+
+# Local tool installations and machine-specific Comet hook wiring.
+/.dsh/
+/.codex/hooks.json
+/.agents/skills/comet/scripts/
+/.worktrees/
+
+# Raw image-generation drafts; selected and reserve brand concepts are tracked.
+/generate/image/
+
+# >>> Comet managed project state >>>
+!/.comet/
+/.comet/*
+!/.comet/config.yaml
+.comet-archive-staging/
+.*.comet-archive-cas-*
+.*.comet-runtime-migration.json*
+.*.comet-runtime-source-*
+.*.comet-runtime-stage-*
+**/comet/changes/*/runtime
+**/comet/archive/*/runtime
+**/.comet/run-state.json
+**/.comet/pending-action.json
+**/.comet/trajectory.jsonl
+**/.comet/context.md
+**/.comet/artifacts.json
+**/.comet/checkpoint.json
+**/.comet/skill-snapshots
+**/.comet/checks
+**/.comet/coordination.json
+**/.comet/subagent-progress.md
+.comet-state.lock
+.comet-state-transaction.json
+# <<< Comet managed project state <<<

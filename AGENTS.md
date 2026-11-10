@@ -77,3 +77,27 @@ bun run i18n:sync
 
 - **文档限制**：未经明确要求，不在 `docs/` 新增文档，不在 `plugins/` 下生成说明文档。
 - **极简改动**：优先复用、提前返回与清晰分支；不为未知需求建立框架，不进行无关重构。
+
+## 6. 本机开发环境
+
+- Windows / PowerShell；版本见 [.vfox.toml](.vfox.toml)：Go 1.27.1、Bun 1.4.4、Node.js 24.21.0。本机无 Docker，使用 SQLite + 内存缓存。
+- 根目录 `.env` 已配置本地数据库和 HTTP 登录：`SQL_DSN=local`、`MEMORY_CACHE_ENABLED=true`、`SESSION_COOKIE_SECURE=false`，Redis 留空。数据在 `one-api.db`，日志在 `logs/`。
+
+从仓库根目录分别启动两个终端：
+
+```powershell
+# 后端 :3000；源码未变时跳过构建，直接运行 exe
+$env:GOWORK = 'off'
+go build -o .cache/new-api-dev.exe .
+if ($LASTEXITCODE -ne 0) { throw '后端构建失败' }
+& ./.cache/new-api-dev.exe
+```
+
+```powershell
+# 前端 :5173，API 代理到后端
+Set-Location web
+$env:VITE_REACT_APP_SERVER_URL = 'http://127.0.0.1:3000'
+bun run dev --host 127.0.0.1 --port 5173
+```
+
+入口：<http://127.0.0.1:5173/>；新库进入 `/setup`。`web/dist` 缺失或需更新内嵌页面时，先按第 2 节构建前端，再构建后端。健康检查：`Invoke-RestMethod http://127.0.0.1:5173/api/status`。
