@@ -34,6 +34,10 @@ type BaseNavItem = {
    * `useSidebarView`). Route-level guards still enforce access independently.
    */
   requiredRole?: number
+  /**
+   * Whether this link opens externally in a new browser tab
+   */
+  external?: boolean
 }
 
 /**
