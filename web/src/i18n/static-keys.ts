@@ -547,6 +547,7 @@ export const STATIC_I18N_KEYS = [
   'Downgrade to this group after the subscription expires',
   'Allow wallet balance after quota used up',
   'Unlimited',
+  'Site',
   'Update plan info',
   'Create new subscription plan',
   'Modify existing subscription plan configuration',

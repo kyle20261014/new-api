@@ -18,11 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Activity,
+  BookOpen,
   Box,
   ClipboardList,
   CreditCard,
   FileText,
   FlaskConical,
+  Globe,
+  Home,
+  Info,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -32,7 +36,9 @@ import {
   ServerCog,
   Settings,
   ShieldCheck,
+  Sparkles,
   Ticket,
+  Trophy,
   User,
   Users,
   Wallet,
@@ -40,7 +46,17 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarBadges, SidebarData } from '@/components/layout/types'
+import { useTopNavLinks } from '@/hooks/use-top-nav-links'
 import { ROLE } from '@/lib/roles'
+
+function getSiteNavIcon(href: string, external?: boolean) {
+  if (href === '/') return Home
+  if (href === '/pricing') return Sparkles
+  if (href === '/rankings') return Trophy
+  if (href === '/about') return Info
+  if (external || href === '/docs' || href.includes('docs')) return BookOpen
+  return Globe
+}
 
 /**
  * Root navigation groups for the application sidebar.
@@ -50,6 +66,16 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   const { t } = useTranslation()
+  const topNavLinks = useTopNavLinks()
+
+  // Migrate top navigation links to sidebar while excluding console to avoid duplicate overview entry
+  const siteNavLinks = topNavLinks.filter((link) => link.href !== '/dashboard')
+  const siteItems = siteNavLinks.map((link) => ({
+    title: link.title,
+    url: link.href,
+    icon: getSiteNavIcon(link.href, link.external),
+    external: link.external,
+  }))
 
   return {
     navGroups: [
@@ -128,6 +154,15 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
           },
         ],
       },
+      ...(siteItems.length > 0
+        ? [
+            {
+              id: 'site',
+              title: t('Site'),
+              items: siteItems,
+            },
+          ]
+        : []),
       {
         id: 'admin',
         title: t('Admin'),
