@@ -1,0 +1,1379 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
+/* Scoped styles for Mowan AI Landing Page (All .xc-* selectors scoped to .mowan-landing) */
+.mowan-landing {
+  background-color: #050508;
+  color: #eef0fa;
+  font-family: Inter, system-ui, -apple-system, 'Microsoft YaHei', sans-serif;
+  color-scheme: dark;
+  overflow-x: clip;
+  position: relative;
+  min-height: 100vh;
+  isolation: isolate;
+}
+
+.mowan-landing main,
+.mowan-landing section,
+.mowan-landing footer {
+  position: relative;
+  z-index: 1;
+}
+
+/* Background starry universe texture - Dense high-fidelity starfield */
+.mowan-landing.mowan-stars-bg {
+  background-color: #06070b;
+  background-image:
+    radial-gradient(1px 1px at 25px 35px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(
+      1.2px 1.2px at 65px 120px,
+      rgba(255, 255, 255, 0.8),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(
+      1.5px 1.5px at 110px 45px,
+      rgba(147, 197, 253, 0.9),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(
+      1px 1px at 180px 140px,
+      rgba(255, 255, 255, 0.85),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(
+      1.8px 1.8px at 240px 210px,
+      rgba(56, 189, 248, 0.9),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(1px 1px at 310px 85px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(
+      1.2px 1.2px at 370px 260px,
+      rgba(192, 132, 252, 0.8),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(
+      1px 1px at 430px 160px,
+      rgba(255, 255, 255, 0.7),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(
+      1.6px 1.6px at 490px 300px,
+      rgba(255, 255, 255, 0.9),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(
+      1px 1px at 540px 50px,
+      rgba(125, 211, 252, 0.75),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(1.4px 1.4px at 590px 190px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(
+      1px 1px at 640px 110px,
+      rgba(255, 255, 255, 0.8),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(
+      2px 2px at 700px 240px,
+      rgba(56, 189, 248, 0.95),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(1px 1px at 760px 70px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(
+      1.2px 1.2px at 820px 290px,
+      rgba(255, 255, 255, 0.75),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(
+      1px 1px at 870px 180px,
+      rgba(147, 197, 253, 0.85),
+      rgba(0, 0, 0, 0)
+    ),
+    radial-gradient(1.5px 1.5px at 930px 40px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(
+      1px 1px at 980px 220px,
+      rgba(255, 255, 255, 0.7),
+      rgba(0, 0, 0, 0)
+    );
+  background-repeat: repeat;
+  background-size: 1000px 400px;
+}
+
+/* Cyan Glow Pulse */
+@keyframes mowan-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.04);
+  }
+}
+
+.mowan-landing .mowan-pulse-glow {
+  animation: mowan-glow-pulse 6s ease-in-out infinite;
+}
+
+/* Slow orbital particle rotation */
+@keyframes mowan-orbit-rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.mowan-landing .mowan-orbit-anim {
+  animation: mowan-orbit-rotate 38s linear infinite;
+}
+
+.mowan-landing .mowan-orbit-reverse {
+  animation: mowan-orbit-rotate 48s linear infinite reverse;
+}
+
+/* Floating animation for models & cards */
+@keyframes mowan-card-float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.mowan-landing .mowan-float-slow {
+  animation: mowan-card-float 5s ease-in-out infinite;
+}
+
+.mowan-landing .mowan-float-delay-1 {
+  animation: mowan-card-float 5.5s ease-in-out infinite;
+  animation-delay: 1.2s;
+}
+
+.mowan-landing .mowan-float-delay-2 {
+  animation: mowan-card-float 6s ease-in-out infinite;
+  animation-delay: 2.4s;
+}
+
+/* Infinite Marquee Scrolling */
+@keyframes mowan-marquee-left {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes mowan-marquee-right {
+  0% {
+    transform: translateX(-50%);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.mowan-landing .mowan-marquee-track-left {
+  display: flex;
+  width: max-content;
+  animation: mowan-marquee-left 42s linear infinite;
+  will-change: transform;
+}
+
+.mowan-landing .mowan-marquee-track-right {
+  display: flex;
+  width: max-content;
+  animation: mowan-marquee-right 46s linear infinite;
+  will-change: transform;
+}
+
+.mowan-landing .mowan-marquee-track-left:hover,
+.mowan-landing .mowan-marquee-track-right:hover {
+  animation-play-state: paused;
+}
+
+/* Voice Vortex Spin */
+@keyframes mowan-vortex-spin {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.05);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+.mowan-landing .mowan-vortex-spin {
+  animation: mowan-vortex-spin 30s linear infinite;
+}
+
+/* Accessibility: Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  .mowan-landing .mowan-pulse-glow,
+  .mowan-landing .mowan-orbit-anim,
+  .mowan-landing .mowan-orbit-reverse,
+  .mowan-landing .mowan-float-slow,
+  .mowan-landing .mowan-float-delay-1,
+  .mowan-landing .mowan-float-delay-2,
+  .mowan-landing .mowan-marquee-track-left,
+  .mowan-landing .mowan-marquee-track-right,
+  .mowan-landing .mowan-vortex-spin {
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
+/* WebGL Particle Scene Background */
+.mowan-landing .xc-beijing {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: #050508;
+  isolation: isolate;
+}
+
+.mowan-landing .xc-beijing:before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(1px 1px at 20px 30px, #bec9ff99, transparent),
+    radial-gradient(1px 1px at 97px 120px, #fff7, transparent);
+  background-size: 170px 193px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.mowan-landing .xc-beijing canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  opacity: 0;
+  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 2;
+  display: block;
+}
+
+.mowan-landing .xc-beijing canvas.xc-ready {
+  opacity: 1;
+}
+
+/* Header */
+.mowan-landing .xc-header {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 100;
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  gap: 36px;
+  padding: 16px max(24px, calc((100vw - 1360px) / 2));
+  transition: background 0.3s ease;
+}
+
+.mowan-landing .xc-header.xc-solid {
+  background: rgba(6, 7, 11, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mowan-landing .xc-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 220px;
+  font-weight: 700 !important;
+  color: #ffffff;
+  text-decoration: none;
+}
+
+.mowan-landing .xc-brand span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mowan-landing .xc-brand img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.mowan-landing .xc-menu,
+.mowan-landing .xc-actions {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  font-size: 14px;
+}
+
+.mowan-landing .xc-menu {
+  color: #bec1d1;
+}
+
+.mowan-landing .xc-menu a {
+  color: #bec1d1;
+  transition: color 0.2s;
+}
+
+.mowan-landing .xc-menu a:hover,
+.mowan-landing .xc-menu a.active {
+  color: #4fd1ff;
+}
+
+.mowan-landing .xc-actions {
+  margin-left: auto;
+  gap: 14px;
+}
+
+@media (max-width: 1100px) {
+  .mowan-landing .xc-menu {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .mowan-landing .xc-header {
+    gap: 12px;
+    padding: 14px 20px;
+  }
+  .mowan-landing .xc-actions {
+    gap: 8px;
+  }
+  .mowan-landing .xc-brand {
+    max-width: 160px;
+  }
+}
+
+@media (max-width: 420px) {
+  .mowan-landing .xc-header {
+    gap: 4px;
+    padding-inline: 12px;
+  }
+  .mowan-landing .xc-brand {
+    max-width: 105px;
+    font-size: 13px !important;
+  }
+  .mowan-landing .xc-brand img {
+    width: 26px;
+    height: 26px;
+  }
+  .mowan-landing .xc-actions {
+    gap: 6px;
+  }
+}
+
+/* Sections Base & Typography */
+.mowan-landing .xc-section {
+  position: relative;
+  min-height: 100svh;
+  max-width: 1440px;
+  margin: auto;
+  padding: 110px 64px 70px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1100px) {
+  .mowan-landing .xc-section {
+    padding: 110px 36px 70px;
+  }
+}
+
+.mowan-landing .xc-models,
+.mowan-landing .xc-inspire {
+  text-align: center;
+  align-items: center;
+}
+
+.mowan-landing .xc-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: #98a5be;
+  margin: 0 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mowan-landing .xc-eyebrow-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4fd1ff;
+  display: inline-block;
+  box-shadow: 0 0 8px rgba(79, 209, 255, 0.6);
+}
+
+.mowan-landing h1 {
+  font-size: clamp(40px, 5.1vw, 76px);
+  letter-spacing: -0.045em;
+  line-height: 1.13;
+  margin: 0 0 28px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.mowan-landing h1 span {
+  background: linear-gradient(110deg, #fff 12%, #b7c9ff 65%, #b88bff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.mowan-landing h2 {
+  font-size: clamp(34px, 4.7vw, 66px);
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+  margin: 0 0 24px;
+  font-weight: 750;
+  color: #ffffff;
+}
+
+.mowan-landing .xc-lead {
+  font-size: 17px;
+  line-height: 1.9;
+  color: #adb2c8;
+  max-width: 600px;
+  margin: 0 0 32px;
+}
+
+.mowan-landing .xc-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 24px 0;
+}
+
+.mowan-landing .xc-capsule,
+.mowan-landing .xc-outline,
+.mowan-landing .xc-glass,
+.mowan-landing .xc-chip,
+.mowan-landing .xc-pubu-card {
+  height: auto !important;
+  min-height: auto !important;
+  white-space: normal !important;
+  text-align: left !important;
+}
+
+.mowan-landing .xc-outline {
+  border: 1px solid #4fd1ff99 !important;
+  color: #8df !important;
+  padding: 13px 24px !important;
+  border-radius: 40px !important;
+  background: #0b182d66 !important;
+  box-shadow: 0 0 26px #4fd1ff17 !important;
+  font-size: 14px !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.mowan-landing .xc-outline:hover {
+  border-color: #79dbff !important;
+  color: #b8ecff !important;
+  box-shadow: 0 0 32px #4fd1ff33 !important;
+}
+
+.mowan-landing .xc-glass {
+  border: 1px solid #ffffff20 !important;
+  background: #ffffff08 !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border-radius: 40px !important;
+  padding: 12px 22px !important;
+  font-size: 14px !important;
+  color: #ffffff !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.mowan-landing .xc-glass:hover {
+  border-color: #ffffff40 !important;
+  background: #ffffff14 !important;
+}
+
+/* Section 01 Hero */
+.mowan-landing .xc-hero {
+  flex-direction: row;
+  align-items: center;
+  gap: 28px;
+}
+
+.mowan-landing .xc-hero-copy {
+  width: 46%;
+  container-type: inline-size;
+  z-index: 1;
+}
+
+.mowan-landing .xc-hero .xc-eyebrow {
+  color: #8eceec;
+  letter-spacing: 0.08em;
+}
+
+.mowan-landing .xc-signup-gift {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 8px 6px;
+  font-size: clamp(9px, 3.35cqw, 12px);
+  color: #a1a8bf;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.mowan-landing .xc-signup-gift:hover {
+  color: #4fd1ff;
+}
+
+.mowan-landing .xc-orbit {
+  position: relative;
+  width: 54%;
+  height: 72vh;
+}
+
+.mowan-landing .xc-scroll {
+  position: absolute;
+  bottom: 30px;
+  left: 64px;
+  color: #a1a8bf !important;
+  font-size: 12px !important;
+  letter-spacing: 0.12em;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.2s;
+}
+
+.mowan-landing .xc-scroll:hover {
+  color: #fff !important;
+}
+
+/* Section 02 Create / Prompt */
+.mowan-landing .xc-prompt {
+  text-align: center;
+  align-items: center;
+}
+
+.mowan-landing .xc-prompt-copy {
+  position: absolute;
+  bottom: calc(50% + 90px);
+  left: 20px;
+  right: 20px;
+}
+
+.mowan-landing .xc-prompt-copy .xc-eyebrow {
+  justify-content: center;
+}
+
+.mowan-landing .xc-prompt-copy .xc-lead {
+  margin: 0 auto;
+}
+
+.mowan-landing .xc-capsule {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  width: min(800px, 80%);
+  padding: 20px 30px !important;
+  border: 1px solid #79d9ff44 !important;
+  border-radius: 60px !important;
+  background: #07101b80 !important;
+  color: #b9dcf5 !important;
+  text-align: left;
+  font-size: 17px !important;
+  -webkit-backdrop-filter: blur(2px) !important;
+  backdrop-filter: blur(2px) !important;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 30px rgba(79, 209, 255, 0.1);
+}
+
+.mowan-landing .xc-capsule:hover {
+  border-color: #79d9ff88 !important;
+  box-shadow: 0 0 35px rgba(79, 209, 255, 0.25);
+}
+
+.mowan-landing .xc-send {
+  margin-left: auto;
+  background: #70cfff22;
+  color: #83d7ff;
+  border-radius: 50%;
+  padding: 8px 14px;
+}
+
+.mowan-landing .xc-capabilities {
+  position: absolute;
+  top: calc(50% + 100px);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 0 16px;
+}
+
+.mowan-landing .xc-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #83d7ff;
+  box-shadow: 0 0 8px #83d7ff;
+  display: inline-block;
+}
+
+.mowan-landing .xc-prompt-feedback {
+  position: absolute;
+  top: calc(50% + 165px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 20px;
+  border-radius: 40px;
+  background: rgba(11, 24, 45, 0.9);
+  border: 1px solid rgba(79, 209, 255, 0.4);
+  color: #8df;
+  font-size: 13px;
+  box-shadow: 0 0 20px rgba(79, 209, 255, 0.15);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 20;
+  animation: mowan-fade-in 0.2s ease-out;
+  white-space: nowrap;
+}
+
+@keyframes mowan-fade-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (max-width: 900px) {
+  .mowan-landing .xc-section {
+    padding: 110px 24px 70px;
+  }
+  .mowan-landing .xc-hero {
+    flex-direction: column;
+    gap: 0;
+    padding-top: 130px;
+  }
+  .mowan-landing .xc-hero-copy {
+    width: 100%;
+    max-width: 600px;
+  }
+  .mowan-landing .xc-orbit {
+    width: 82%;
+    height: 42vh;
+    min-height: 290px;
+    margin: 20px auto 35px;
+  }
+  .mowan-landing .xc-scroll {
+    left: 24px;
+  }
+  .mowan-landing .xc-lead {
+    font-size: 15px;
+  }
+  .mowan-landing .xc-prompt-copy {
+    bottom: calc(50% + 75px);
+  }
+  .mowan-landing .xc-prompt-copy h2 {
+    font-size: 36px;
+  }
+  .mowan-landing .xc-capabilities {
+    top: calc(50% + 90px);
+  }
+  .mowan-landing .xc-capabilities .xc-glass {
+    padding: 10px 15px !important;
+  }
+  .mowan-landing .xc-capsule {
+    width: 86%;
+    padding: 15px 20px !important;
+    font-size: 14px !important;
+    gap: 12px;
+  }
+  .mowan-landing .xc-prompt-feedback {
+    top: calc(50% + 150px);
+    font-size: 12px;
+  }
+}
+
+@media (max-height: 600px) {
+  .mowan-landing .xc-prompt {
+    min-height: 660px;
+  }
+}
+
+/* Real Reference Gallery (XC-Pubu) CSSOM Rules */
+.mowan-landing .xc-pubu-container {
+  --xc-columns: 5;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+@media (max-width: 1100px) {
+  .mowan-landing .xc-pubu-container {
+    --xc-columns: 3;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .mowan-landing .xc-pubu-container {
+    --xc-columns: 2;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+.mowan-landing .xc-pubu-columns {
+  display: grid;
+  grid-template-columns: repeat(var(--xc-columns, 5), minmax(0, 1fr));
+  gap: 15px;
+  overflow: visible;
+}
+
+.mowan-landing .xc-pubu-column {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  min-width: 0;
+}
+
+@media (max-width: 575px) {
+  .mowan-landing .xc-pubu-columns {
+    gap: 10px;
+  }
+  .mowan-landing .xc-pubu-column {
+    gap: 10px;
+  }
+}
+
+.mowan-landing .xc-pubu-card {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  padding: 0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  background-color: rgba(30, 31, 37, 0.933) !important;
+  color: inherit !important;
+  font-weight: normal !important;
+  align-items: stretch !important;
+  justify-content: flex-start !important;
+  cursor: pointer;
+  flex-grow: 1;
+  transition:
+    transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.mowan-landing .xc-pubu-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(56, 189, 248, 0.6) !important;
+  background-color: rgba(30, 31, 37, 0.933) !important;
+  box-shadow:
+    0 12px 24px -8px rgba(0, 0, 0, 0.5),
+    0 0 16px -2px rgba(56, 189, 248, 0.15) !important;
+}
+
+.mowan-landing .xc-pubu-card:focus-visible {
+  outline: 2px solid #4fd1ff !important;
+  outline-offset: 2px !important;
+  border-color: rgba(56, 189, 248, 0.8) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mowan-landing .xc-pubu-card {
+    transition: none !important;
+  }
+  .mowan-landing .xc-pubu-card:hover {
+    transform: none !important;
+  }
+}
+
+.mowan-landing .xc-pubu-img {
+  width: 100%;
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  object-fit: cover;
+  display: block;
+}
+
+.mowan-landing .xc-pubu-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+@media (max-width: 575px) {
+  .mowan-landing .xc-pubu-info {
+    padding: 9px;
+  }
+}
+
+.mowan-landing .xc-pubu-title {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #f1f5f9;
+  font-weight: 500;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mowan-landing .xc-pubu-tags {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 5px;
+  max-height: 24px;
+  overflow: hidden;
+  font-size: 11px;
+}
+
+.mowan-landing .xc-pubu-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+}
+
+.mowan-landing .xc-pubu-tag-original {
+  background: rgba(8, 145, 178, 0.15);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+}
+
+.mowan-landing .xc-pubu-more {
+  padding: 36px 12px 12px;
+  text-align: center;
+}
+
+/* Model Chips & Floating Animation */
+.mowan-landing .xc-chip {
+  border: 1px solid #ffffff24 !important;
+  background: #111527aa !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  backdrop-filter: blur(10px) !important;
+  border-radius: 16px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  font-size: 14px !important;
+  color: #f1f5f9 !important;
+  height: auto !important;
+  min-height: auto !important;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mowan-landing .xc-chip:hover {
+  border-color: #87d4ff80 !important;
+  background: #202b42bb !important;
+}
+
+.mowan-landing .xc-chip img,
+.mowan-landing .xc-chip .xc-model-icon {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.mowan-landing .xc-chip .xc-model-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.mowan-landing .xc-floating {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  animation: xc-float 4s ease-in-out infinite;
+  animation-delay: var(--xc-delay, 0s);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  padding: 12px 17px !important;
+  max-width: 230px !important;
+  text-align: left !important;
+}
+
+.mowan-landing .xc-floating .xc-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes xc-float {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) translateY(0);
+  }
+  50% {
+    transform: translate(-50%, -50%) translateY(-10px);
+  }
+}
+
+/* Model Marquee */
+.mowan-landing .xc-model-marquee {
+  width: 100%;
+  margin: 20px 0 44px;
+  text-align: left;
+}
+
+.mowan-landing .xc-model-lane {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 10px 0;
+}
+
+.mowan-landing .xc-model-track {
+  display: flex;
+  width: max-content;
+  animation: xc-model-drift var(--xc-duration, 38s) linear infinite;
+  will-change: transform;
+}
+
+.mowan-landing .xc-reverse .xc-model-track {
+  animation-direction: reverse;
+}
+
+.mowan-landing .xc-model-group {
+  display: flex;
+  flex-shrink: 0;
+  gap: 16px;
+  padding-right: 16px;
+}
+
+.mowan-landing .xc-model-marquee .xc-chip {
+  flex-shrink: 0;
+  max-width: none !important;
+  white-space: nowrap;
+  padding: 18px 24px !important;
+}
+
+.mowan-landing .xc-model-marquee .xc-model-name {
+  white-space: nowrap;
+}
+
+.mowan-landing .xc-model-lane:hover .xc-model-track,
+.mowan-landing .xc-model-lane:focus-within .xc-model-track {
+  animation-play-state: paused;
+}
+
+.mowan-landing .xc-model-lane:focus-within .xc-model-track {
+  animation: none;
+}
+
+@keyframes xc-model-drift {
+  to {
+    transform: translate(-50%);
+  }
+}
+
+@media (max-width: 900px) {
+  .mowan-landing .xc-chip {
+    font-size: 12px !important;
+  }
+  .mowan-landing .xc-chip img,
+  .mowan-landing .xc-chip .xc-model-icon {
+    width: 20px;
+    height: 20px;
+  }
+  .mowan-landing .xc-floating {
+    max-width: 140px !important;
+    padding: 8px 10px !important;
+    font-size: 11px !important;
+  }
+  .mowan-landing .xc-model-marquee .xc-chip {
+    padding: 14px 18px !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .mowan-landing .xc-floating {
+    max-width: 115px !important;
+  }
+  .mowan-landing .xc-orbit {
+    width: 76% !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mowan-landing .xc-floating,
+  .mowan-landing .xc-model-track {
+    animation: none !important;
+    transform: none !important;
+  }
+  .mowan-landing .xc-model-group[aria-hidden='true'] {
+    display: none !important;
+  }
+}
+
+/* Voice Section */
+.mowan-landing .xc-voice > div {
+  max-width: 560px;
+  padding-bottom: 17vh;
+}
+
+@media (max-width: 900px) {
+  .mowan-landing .xc-voice > div {
+    padding-bottom: 25vh;
+  }
+}
+
+/* Global Focus-Visible for Interactive Controls */
+.mowan-landing button:focus-visible,
+.mowan-landing a:focus-visible {
+  outline: 2px solid #4fd1ff;
+  outline-offset: 5px;
+}
+
+/* Section Navigation Dots */
+.mowan-landing .xc-dots {
+  position: fixed;
+  right: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.mowan-landing .xc-dots button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.mowan-landing .xc-dots button:focus-visible {
+  outline: 2px solid #4fd1ff !important;
+  outline-offset: 5px;
+  border-radius: 4px;
+}
+
+.mowan-landing .xc-dots span {
+  font-size: 11px;
+  opacity: 0;
+  color: #a6c9ed;
+  transition: opacity 0.2s;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.mowan-landing .xc-dots button:hover span,
+.mowan-landing .xc-dots button:focus-visible span,
+.mowan-landing .xc-dots .active span {
+  opacity: 1;
+}
+
+.mowan-landing .xc-dots button:focus-visible i {
+  box-shadow:
+    0 0 0 2px #4fd1ff,
+    0 0 10px #70cfff;
+}
+
+.mowan-landing .xc-dots i {
+  display: block;
+  height: 5px;
+  width: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.267);
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+
+.mowan-landing .xc-dots .active i {
+  background: #87d4ff;
+  box-shadow: 0 0 12px #70cfff;
+}
+
+@media (max-width: 1100px) {
+  .mowan-landing .xc-dots {
+    right: 12px;
+  }
+  .mowan-landing .xc-dots span {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .mowan-landing .xc-dots {
+    display: none;
+  }
+}
+
+/* Footer Section */
+.mowan-landing .xc-footer {
+  position: relative;
+  padding: 0 0 30px;
+  border-top: 1px solid #ffffff12;
+  background: #050508ed;
+}
+
+.mowan-landing .xc-footer-main {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) repeat(3, minmax(120px, 160px));
+  gap: 36px;
+  max-width: 1440px;
+  margin: auto;
+  padding: 64px 6vw;
+  text-align: left;
+}
+
+.mowan-landing .xc-footer-brand {
+  min-width: 0;
+}
+
+.mowan-landing .xc-footer-brand .xc-brand {
+  max-width: 100%;
+}
+
+.mowan-landing .xc-footer-brand .xc-brand span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.mowan-landing .xc-footer-brand .xc-brand img,
+.mowan-landing .xc-footer-symbol {
+  flex-shrink: 0;
+}
+
+.mowan-landing .xc-footer-brand p {
+  color: #9397a8;
+  font-size: 14px;
+  line-height: 1.8;
+  margin-top: 18px;
+}
+
+.mowan-landing .xc-footer-column {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 17px;
+  font-size: 13px;
+}
+
+.mowan-landing .xc-footer-column h3 {
+  font-size: 14px;
+  margin: 0 0 6px;
+  color: #eee;
+}
+
+.mowan-landing .xc-footer-column a,
+.mowan-landing .xc-footer-column button {
+  color: #9397a8;
+  text-decoration: none;
+  padding: 0;
+  text-align: left;
+  transition: color 0.2s;
+}
+
+.mowan-landing .xc-footer-column a:hover,
+.mowan-landing .xc-footer-column button:hover {
+  color: #fff;
+}
+
+.mowan-landing .xc-footer-bottom {
+  border-top: 1px solid #ffffff12;
+  text-align: center;
+  overflow-wrap: anywhere;
+  padding: 25px 6vw 0;
+  color: #9397a8;
+  font-size: 12px;
+}
+
+.mowan-landing .xc-support {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #152236dd;
+  border: 1px solid #ffffff33;
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  cursor: pointer;
+  transition:
+    transform 0.2s,
+    background 0.2s;
+}
+
+.mowan-landing .xc-support:hover {
+  background: #1c2e4bdd;
+  transform: scale(1.05);
+}
+
+@media (max-width: 800px) {
+  .mowan-landing .xc-footer-main {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 30px 18px;
+    padding: 40px 24px;
+  }
+  .mowan-landing .xc-footer-brand {
+    grid-column: 1 / -1;
+  }
+  .mowan-landing .xc-footer-bottom {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+/* ==========================================================================
+   Home Dedicated Standalone Loader (Stardust Orbital Particle Revolution)
+   ========================================================================== */
+.mowan-home-loader-screen {
+  background-color: #050508;
+  background-image:
+    radial-gradient(
+      1px 1px at 30px 40px,
+      rgba(255, 255, 255, 0.75),
+      transparent
+    ),
+    radial-gradient(
+      1.2px 1.2px at 120px 80px,
+      rgba(147, 197, 253, 0.7),
+      transparent
+    ),
+    radial-gradient(
+      1.5px 1.5px at 280px 160px,
+      rgba(56, 189, 248, 0.65),
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 420px 60px,
+      rgba(255, 255, 255, 0.8),
+      transparent
+    ),
+    radial-gradient(
+      1.4px 1.4px at 580px 220px,
+      rgba(125, 211, 252, 0.7),
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 740px 130px,
+      rgba(255, 255, 255, 0.6),
+      transparent
+    ),
+    radial-gradient(
+      1.6px 1.6px at 900px 90px,
+      rgba(56, 189, 248, 0.8),
+      transparent
+    );
+  background-repeat: repeat;
+  background-size: 960px 320px;
+}
+
+@keyframes mowan-loader-flame-breathe {
+  0%,
+  100% {
+    transform: scale(0.95);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.65;
+  }
+}
+
+@keyframes mowan-loader-brand-shimmer {
+  0%,
+  100% {
+    opacity: 0.82;
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.35));
+  }
+}
+
+.mowan-loader-core-flame {
+  animation: mowan-loader-flame-breathe 2.4s ease-in-out infinite;
+}
+
+.mowan-loader-brand-text {
+  animation: mowan-loader-brand-shimmer 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mowan-loader-core-flame,
+  .mowan-loader-brand-text {
+    animation: none !important;
+  }
+}
