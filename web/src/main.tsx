@@ -22,6 +22,7 @@ import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
 
 import { installBuildMetadata } from '@/lib/build-metadata'
+import { resolveSystemName } from '@/lib/constants'
 import { applyFaviconToDom } from '@/lib/dom-utils'
 import '@/lib/dayjs'
 import { initializeFrontendCache } from '@/lib/frontend-cache'
@@ -72,6 +73,7 @@ if (!rootElement) {
   try {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
     const apply = (name: string) => {
+      name = resolveSystemName(name)
       document.title = name
       const metaTitle = document.querySelector(
         'meta[name="title"]'

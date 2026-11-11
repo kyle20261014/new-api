@@ -10,6 +10,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWaffoGoodsInfoBrand(t *testing.T) {
+	previousName := common.SystemName
+	t.Cleanup(func() { common.SystemName = previousName })
+	for _, name := range []string{"", "   ", "魔丸AI", "Custom Brand"} {
+		common.SystemName = name
+		expected := name
+		if name == "" || name == "   " {
+			expected = "魔丸AI"
+		}
+		require.Equal(t, expected, buildWaffoTopUpGoodsInfo(10).AppName)
+	}
+}
+
 func TestFormatWaffoPancakeAmount_UsesDisplayPriceString(t *testing.T) {
 	testCases := []struct {
 		name     string

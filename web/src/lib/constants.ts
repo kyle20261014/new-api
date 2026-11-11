@@ -21,7 +21,11 @@ For commercial licensing, please contact support@quantumnous.com
  */
 
 // System Configuration Defaults
-export const DEFAULT_SYSTEM_NAME = 'New API'
+export const DEFAULT_SYSTEM_NAME = '魔丸AI'
+
+export function resolveSystemName(name?: string): string {
+  return !name || name === 'New API' ? DEFAULT_SYSTEM_NAME : name
+}
 export const DEFAULT_LOGO = '/logo.png'
 
 // LocalStorage Keys

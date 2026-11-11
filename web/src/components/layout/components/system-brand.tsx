@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/sidebar'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
+import { resolveSystemName } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 
 type SystemBrandProps = {
@@ -51,7 +52,7 @@ export function SystemBrand(props: SystemBrandProps) {
   const { logo } = useSystemConfig()
 
   const variant = props.variant ?? 'sidebar'
-  const name = status?.system_name || props.defaultName || 'New API'
+  const name = resolveSystemName(status?.system_name || props.defaultName)
   const version =
     status?.version || props.defaultVersion || t('Unknown version')
 

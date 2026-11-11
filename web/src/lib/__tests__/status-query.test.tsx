@@ -29,6 +29,7 @@ import {
 } from '@/lib/nav-modules'
 import {
   STATUS_QUERY_KEY,
+  mapStatusDataToConfig,
   ensureStatus,
   statusQueryOptions,
 } from '@/lib/status-query'
@@ -87,6 +88,41 @@ afterEach(() => {
   apiClient.get = originalGet
   window.localStorage.clear()
   useSystemConfigStore.setState(useSystemConfigStore.getInitialState(), true)
+})
+
+describe('system branding', () => {
+  test.each([undefined, '', 'New API', '魔丸AI'])(
+    'uses 魔丸AI for missing or original default name %s',
+    (systemName) => {
+      expect(mapStatusDataToConfig({ system_name: systemName })).toMatchObject({
+        systemName: '魔丸AI',
+        logo: '/logo.png',
+      })
+    }
+  )
+
+  test('preserves an administrator custom name and logo', () => {
+    expect(
+      mapStatusDataToConfig({ system_name: 'Custom', logo: '/custom.svg' })
+    ).toMatchObject({ systemName: 'Custom', logo: '/custom.svg' })
+  })
+
+  test.each(['New API', 'Custom'])(
+    'restores cached name %s with the current brand default',
+    async (systemName) => {
+      localStorage.setItem(
+        'system-config-storage',
+        JSON.stringify({
+          state: { config: { systemName, logo: '/logo.png' } },
+          version: 0,
+        })
+      )
+      await useSystemConfigStore.persist.rehydrate()
+      expect(useSystemConfigStore.getState().config.systemName).toBe(
+        systemName === 'New API' ? '魔丸AI' : systemName
+      )
+    }
+  )
 })
 
 describe('shared status query deduplication', () => {

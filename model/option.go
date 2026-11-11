@@ -371,6 +371,10 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
+	// Resolve upstream defaults at runtime without rewriting persisted custom settings.
+	if (key == "SystemName" || key == "passkey.rp_display_name") && value == "New API" {
+		value = common.DefaultSystemName
+	}
 	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)

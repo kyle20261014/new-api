@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { getPaymentErrorTranslation } from '@/features/wallet/lib/payment'
+import { DEFAULT_SYSTEM_NAME } from '@/lib/constants'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { removeTrailingSlash } from './utils'
@@ -62,8 +63,8 @@ interface Props {
 }
 
 const PANCAKE_DASHBOARD_URL = 'https://pancake.waffo.ai/merchant/dashboard'
-const DEFAULT_NEW_STORE_NAME = 'new-api-store'
-const DEFAULT_NEW_PRODUCT_NAME = 'new-api-charge-product'
+const DEFAULT_NEW_STORE_NAME = DEFAULT_SYSTEM_NAME
+const DEFAULT_NEW_PRODUCT_NAME = `${DEFAULT_SYSTEM_NAME}充值`
 const DEFAULT_NEW_PAIR_NAME = `${DEFAULT_NEW_STORE_NAME} + ${DEFAULT_NEW_PRODUCT_NAME}`
 
 export function WaffoPancakeSettingsSection({
