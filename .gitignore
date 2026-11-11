@@ -1,6 +1,7 @@
 .idea
 .review
-.vscode
+/.vscode/*
+!/.vscode/launch.json
 .zed
 .history
 upload

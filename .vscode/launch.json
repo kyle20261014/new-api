@@ -1,0 +1,35 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "后端：魔丸AI API（3000）",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "go run . --port 3000",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "GOWORK": "off"
+      }
+    },
+    {
+      "name": "前端：魔丸AI Web（5173）",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "bun run dev --host 127.0.0.1 --port 5173",
+      "cwd": "${workspaceFolder}/web",
+      "env": {
+        "VITE_REACT_APP_SERVER_URL": "http://127.0.0.1:3000"
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "魔丸AI：同时启动前后端",
+      "configurations": [
+        "后端：魔丸AI API（3000）",
+        "前端：魔丸AI Web（5173）"
+      ],
+      "stopAll": true
+    }
+  ]
+}
