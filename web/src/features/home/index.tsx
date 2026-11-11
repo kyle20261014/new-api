@@ -16,26 +16,52 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
-import { Footer } from '@/components/layout/components/footer'
 import { RichContent } from '@/components/rich-content'
 import { useTheme } from '@/context/theme-provider'
+import { useMinimumLoadingTime } from '@/hooks/use-minimum-loading-time'
 import { isLikelyHtml } from '@/lib/content-format'
-import { useAuthStore } from '@/stores/auth-store'
+import { cn } from '@/lib/utils'
 
-import { CTA, Features, Hero, HowItWorks, Stats } from './components'
+import { MowanLanding } from './components/mowan-landing'
+import { ParticleRibbon } from './components/mowan-landing/loader-particle-ribbon'
 import { useHomePageContent } from './hooks'
+
+import './components/mowan-landing/styles.css'
 
 export function Home() {
   const { i18n, t } = useTranslation()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const { resolvedTheme } = useTheme()
-  const { auth } = useAuthStore()
-  const isAuthenticated = !!auth.user
   const { content, isLoaded, isUrl } = useHomePageContent()
+  const showLoading = useMinimumLoadingTime(!isLoaded, 1000)
+  const [overlayVisible, setOverlayVisible] = useState(showLoading)
+  const isOverlayPresent = showLoading || overlayVisible
+  const isExiting = !showLoading && overlayVisible
+
+  useEffect(() => {
+    if (showLoading || !overlayVisible) return
+    const reduced = window.matchMedia(
+      '(prefers-reduced-motion: reduce)'
+    ).matches
+    const timer = window.setTimeout(
+      () => setOverlayVisible(false),
+      reduced ? 150 : 350
+    )
+    return () => window.clearTimeout(timer)
+  }, [showLoading, overlayVisible])
+
+  useEffect(() => {
+    if (!isOverlayPresent) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isOverlayPresent])
 
   const syncIframePreferences = useCallback(() => {
     try {
@@ -53,33 +79,14 @@ export function Home() {
   }, [i18n.language, resolvedTheme])
 
   useEffect(() => {
-    if (isUrl) {
-      syncIframePreferences()
-    }
+    if (isUrl) syncIframePreferences()
   }, [isUrl, syncIframePreferences])
 
-  if (!isLoaded) {
-    return (
-      <PublicLayout showMainContainer={false}>
-        <main className='flex min-h-screen items-center justify-center'>
-          <div className='text-muted-foreground'>{t('Loading...')}</div>
-        </main>
-      </PublicLayout>
-    )
-  }
-
-  if (content) {
-    if (isUrl) {
-      return (
+  let backgroundContent: React.ReactNode = null
+  if (isLoaded) {
+    if (content && isUrl) {
+      backgroundContent = (
         <PublicLayout showMainContainer={false}>
-          {/*
-            allow-top-navigation-by-user-activation: the custom home page URL is
-            admin-configured (trusted); this lets its target="_top" nav/menu links
-            navigate the top-level window on user click. The default sandbox blocks
-            this on desktop, while some mobile browsers allow it via allow-popups,
-            causing inconsistent behavior. This token only permits user-activated
-            top-level navigation and does NOT grant same-origin access.
-          */}
           <iframe
             ref={iframeRef}
             src={content}
@@ -90,12 +97,8 @@ export function Home() {
           />
         </PublicLayout>
       )
-    }
-
-    const contentIsHtml = isLikelyHtml(content)
-
-    if (contentIsHtml) {
-      return (
+    } else if (content && isLikelyHtml(content)) {
+      backgroundContent = (
         <PublicLayout showMainContainer={false}>
           <RichContent
             mode='html'
@@ -105,29 +108,67 @@ export function Home() {
           />
         </PublicLayout>
       )
+    } else if (content) {
+      backgroundContent = (
+        <PublicLayout>
+          <div className='mx-auto max-w-6xl px-4 py-8'>
+            <RichContent
+              mode='markdown'
+              content={content}
+              className='custom-home-content'
+            />
+          </div>
+        </PublicLayout>
+      )
+    } else {
+      backgroundContent = <MowanLanding />
     }
-
-    return (
-      <PublicLayout>
-        <div className='mx-auto max-w-6xl px-4 py-8'>
-          <RichContent
-            mode='markdown'
-            content={content}
-            className='custom-home-content'
-          />
-        </div>
-      </PublicLayout>
-    )
   }
 
   return (
-    <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
-    </PublicLayout>
+    <>
+      <div
+        className={cn(
+          isOverlayPresent &&
+            'transition-opacity duration-350 ease-out motion-reduce:duration-150',
+          isOverlayPresent && !isExiting ? 'opacity-0' : 'opacity-100'
+        )}
+        inert={isOverlayPresent || undefined}
+        aria-hidden={isOverlayPresent || undefined}
+      >
+        {backgroundContent}
+      </div>
+      {isOverlayPresent && (
+        <div
+          role='status'
+          aria-busy='true'
+          className={cn(
+            'mowan-home-loader-screen fixed inset-0 z-[1000] flex items-center justify-center overflow-hidden px-6 text-[#eef0fa]',
+            'transition-opacity duration-350 ease-out motion-reduce:duration-150',
+            isExiting && 'opacity-0'
+          )}
+        >
+          <div
+            className={cn(
+              'flex flex-col items-center gap-7 transition-[opacity,transform] duration-350 ease-out motion-reduce:duration-150',
+              isExiting && 'scale-95 opacity-0 motion-reduce:scale-100'
+            )}
+          >
+            <ParticleRibbon>
+              <div className='mowan-loader-core-flame pointer-events-none absolute size-20 rounded-full bg-gradient-to-tr from-red-600/35 via-rose-500/25 to-amber-500/15 blur-lg' />
+              <img
+                src='/images/mowan/mowan-icon.png'
+                alt=''
+                className='relative z-10 size-12 object-contain drop-shadow-[0_0_12px_rgba(244,63,94,0.35)]'
+              />
+            </ParticleRibbon>
+            <span className='mowan-loader-brand-text text-sm font-semibold tracking-[0.25em] text-slate-200'>
+              {t('mowan.brand.name', '魔丸AI')}
+            </span>
+            <span className='sr-only'>{t('Loading...')}</span>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
