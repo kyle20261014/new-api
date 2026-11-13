@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type TFunction } from 'i18next'
+import type { TFunction } from 'i18next'
 
 import type { TokenUnit } from './types'
 
@@ -27,6 +27,8 @@ import type { TokenUnit } from './types'
 /** Sort options for pricing models */
 export const SORT_OPTIONS = {
   NAME: 'name',
+  RESPONSE_SPEED: 'response-speed',
+  SUCCESS_RATE: 'success-rate',
   INPUT_PRICE_LOW: 'input-price-low',
   INPUT_PRICE_HIGH: 'input-price-high',
   OUTPUT_PRICE_LOW: 'output-price-low',
@@ -40,6 +42,8 @@ export type SortOption = (typeof SORT_OPTIONS)[keyof typeof SORT_OPTIONS]
 export function getSortLabels(t: TFunction): Record<SortOption, string> {
   return {
     [SORT_OPTIONS.NAME]: t('Name'),
+    [SORT_OPTIONS.RESPONSE_SPEED]: t('Response speed: Fast to Slow'),
+    [SORT_OPTIONS.SUCCESS_RATE]: t('Success rate: High to Low'),
     [SORT_OPTIONS.INPUT_PRICE_LOW]: t('Input Price: Low to High'),
     [SORT_OPTIONS.INPUT_PRICE_HIGH]: t('Input Price: High to Low'),
     [SORT_OPTIONS.OUTPUT_PRICE_LOW]: t('Output Price: Low to High'),

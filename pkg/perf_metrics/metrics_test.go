@@ -296,6 +296,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 					require.NoError(t, model.UpsertPerfMetric(&model.PerfMetric{
 						ModelName: "history-model", Group: "a", BucketTs: hour - int64(i+1)*6*3600,
 						RequestCount: 1, SuccessCount: 1,
+						TotalLatencyMs: 1200, OutputTokens: 40, GenerationMs: 1000,
 					}))
 				}
 				for _, row := range []model.PerfMetric{
@@ -330,6 +331,17 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 				assert.Equal(t, 0.0, summaries["history-idle"].SuccessRate)
 				assert.NotContains(t, summaries, "history-hidden")
 				points := history.RecentSuccessSeries["history-model"]
+				detail, err := Query(QueryParams{Model: "history-model", Hours: 24, Recent: true, AllowedGroups: groups})
+				require.NoError(t, err)
+				require.NotNil(t, detail.Summary)
+				assert.Equal(t, summaries["history-model"].SuccessRate, detail.Summary.SuccessRate)
+				assert.Equal(t, summaries["history-model"].AvgLatencyMs, detail.Summary.AvgLatencyMs)
+				assert.Equal(t, summaries["history-model"].AvgTps, detail.Summary.AvgTps)
+				assert.Equal(t, points[0].Ts, detail.WindowStart)
+				idle, err := Query(QueryParams{Model: "history-idle", Hours: 24, Recent: true, AllowedGroups: groups})
+				require.NoError(t, err)
+				require.NotNil(t, idle.Summary)
+				assert.Equal(t, 0.0, idle.Summary.SuccessRate)
 				require.Len(t, points, 24)
 				expected := make([]SuccessRatePoint, 0, 24)
 				for i := 23; i > 0; i-- {

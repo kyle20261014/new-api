@@ -159,6 +159,16 @@ func queryWindow(now time.Time, hours int) (int64, int64) {
 
 func Query(params QueryParams) (QueryResult, error) {
 	startTs, endTs := queryWindow(time.Now(), params.Hours)
+	if params.Recent {
+		recent, err := QuerySummaryAll(params.Hours, params.AllowedGroups, params.Model)
+		if err != nil {
+			return QueryResult{}, err
+		}
+		endTs = recent.WindowEnd
+		if points := recent.RecentSuccessSeries[params.Model]; len(points) > 0 {
+			startTs = points[0].Ts
+		}
+	}
 	allowedGroups := allowedGroupSet(params.AllowedGroups)
 
 	merged := map[bucketKey]counters{}

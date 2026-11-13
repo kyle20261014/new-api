@@ -62,6 +62,7 @@ func GetPerfMetrics(c *gin.Context) {
 		Model:         modelName,
 		Group:         c.Query("group"),
 		Hours:         hours,
+		Recent:        c.Query("recent") == "true",
 		AllowedGroups: append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto"),
 	})
 	if err != nil {

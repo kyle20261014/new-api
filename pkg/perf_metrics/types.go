@@ -19,9 +19,10 @@ type Sample struct {
 }
 
 type QueryParams struct {
-	Model string
-	Group string
-	Hours int
+	Model  string
+	Group  string
+	Hours  int
+	Recent bool
 	// AllowedGroups restricts both the per-group results and the model summary;
 	// nil allows every group.
 	AllowedGroups []string

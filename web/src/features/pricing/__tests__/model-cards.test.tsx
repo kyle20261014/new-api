@@ -158,9 +158,7 @@ describe('model cards', () => {
 
   it('shows missing values without placeholder bars when metrics are unavailable', () => {
     render(<ModelCard model={pricingModel()} onClick={vi.fn()} />)
-    const metrics = screen.getByLabelText(
-      'Performance metrics for the last 24 hours'
-    )
+    const metrics = screen.getByLabelText('Recent performance metrics')
     expect(within(metrics).getAllByText('—')).toHaveLength(2)
     expect(within(metrics).getByText('—s')).toBeVisible()
     expect(within(metrics).getByText('—t/s')).toBeVisible()
@@ -238,7 +236,7 @@ describe('model cards', () => {
       paramsSerializer: { indexes: null },
     })
     const [active, idle] = screen.getAllByLabelText(
-      'Performance metrics for the last 24 hours'
+      'Recent performance metrics'
     )
     expect(within(active).getByText('1.20s')).toBeVisible()
     expect(
@@ -331,9 +329,7 @@ describe('model cards', () => {
           perf={{ avg_latency_ms: 1200, avg_tps: 42, success_rate }}
         />
       )
-      const metrics = screen.getByLabelText(
-        'Performance metrics for the last 24 hours'
-      )
+      const metrics = screen.getByLabelText('Recent performance metrics')
       expect(within(metrics).getAllByText(expected)[0]).toBeVisible()
       expect(within(metrics).getByText('Status')).toBeVisible()
       expect(within(metrics).getByText('1.20s')).toBeVisible()
@@ -607,8 +603,7 @@ describe('model cards', () => {
     await waitFor(() =>
       expect(
         queryClient.getQueryState([
-          'perf-metrics-summary',
-          24,
+          'pricing-model-performance',
           ['example-model'],
         ])?.status
       ).toBe('error')
@@ -618,9 +613,9 @@ describe('model cards', () => {
       paramsSerializer: { indexes: null },
     })
     expect(
-      within(
-        screen.getByLabelText('Performance metrics for the last 24 hours')
-      ).getAllByText(/^—/)
+      within(screen.getByLabelText('Recent performance metrics')).getAllByText(
+        /^—/
+      )
     ).toHaveLength(4)
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Details' }))
@@ -645,17 +640,14 @@ describe('model cards', () => {
     expect(request).toHaveBeenCalledWith('/api/perf-metrics/summary', {
       params: {
         hours: 24,
-        recent_model: models.slice(0, 20).map((model) => model.model_name),
+        recent_model: models.map((model) => model.model_name).sort(),
       },
       paramsSerializer: { indexes: null },
     })
     await user.click(screen.getByRole('button', { name: 'Next page' }))
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'model-21' })).toBeVisible()
-    expect(request).toHaveBeenLastCalledWith('/api/perf-metrics/summary', {
-      params: { hours: 24, recent_model: ['model-21'] },
-      paramsSerializer: { indexes: null },
-    })
+    expect(request).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Previous page' }))
     expect(screen.getByRole('heading', { name: 'model-1' })).toBeVisible()

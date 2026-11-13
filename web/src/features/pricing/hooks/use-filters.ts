@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useSearch } from '@tanstack/react-router'
 import { useMemo, useCallback, useState } from 'react'
 
+import type { PerformanceSummary } from '@/features/performance-metrics/types'
 import { useDebounce } from '@/hooks/use-debounce'
 
 import {
@@ -30,7 +31,12 @@ import {
   VIEW_MODES,
   type ViewMode,
 } from '../constants'
-import { filterAndSortModels, extractAllTags } from '../lib/filters'
+import {
+  filterAndSortModels,
+  extractAllTags,
+  filterByCategory,
+  type ModelCategory,
+} from '../lib/filters'
 import type { PricingModel, TokenUnit } from '../types'
 
 type FilterState = {
@@ -53,7 +59,11 @@ function normalizeViewMode(value: unknown): ViewMode {
   return VIEW_MODES.CARD
 }
 
-export function useFilters(models: PricingModel[]) {
+export function useFilters(
+  models: PricingModel[],
+  metrics?: ReadonlyMap<string, PerformanceSummary>
+) {
+  const [categoryFilter, setCategoryFilter] = useState<ModelCategory>('all')
   const search = useSearch({ from: '/pricing/' })
   const [filterState, setFilterState] = useState<FilterState>(() => ({
     search: search.search,
@@ -146,18 +156,22 @@ export function useFilters(models: PricingModel[]) {
     return extractAllTags(models)
   }, [models])
 
-  const filteredModels = useMemo(() => {
+  const categoryModels = useMemo(() => {
     if (!models || models.length === 0) return []
 
-    return filterAndSortModels(models, {
-      search: debouncedSearchInput,
-      vendor: vendorFilter,
-      group: groupFilter,
-      quotaType: quotaTypeFilter,
-      endpointType: endpointTypeFilter,
-      tag: tagFilter,
-      sortBy,
-    })
+    return filterAndSortModels(
+      models,
+      {
+        search: debouncedSearchInput,
+        vendor: vendorFilter,
+        group: groupFilter,
+        quotaType: quotaTypeFilter,
+        endpointType: endpointTypeFilter,
+        tag: tagFilter,
+        sortBy,
+      },
+      metrics
+    )
   }, [
     models,
     debouncedSearchInput,
@@ -167,29 +181,52 @@ export function useFilters(models: PricingModel[]) {
     endpointTypeFilter,
     tagFilter,
     sortBy,
+    metrics,
   ])
+
+  const filteredModels = useMemo(
+    () => filterByCategory(categoryModels, categoryFilter),
+    [categoryModels, categoryFilter]
+  )
 
   const hasActiveFilters = useMemo(
     () =>
+      categoryFilter !== 'all' ||
       vendorFilter !== FILTER_ALL ||
       groupFilter !== FILTER_ALL ||
       quotaTypeFilter !== QUOTA_TYPES.ALL ||
       endpointTypeFilter !== ENDPOINT_TYPES.ALL ||
       tagFilter !== FILTER_ALL,
-    [vendorFilter, groupFilter, quotaTypeFilter, endpointTypeFilter, tagFilter]
+    [
+      categoryFilter,
+      vendorFilter,
+      groupFilter,
+      quotaTypeFilter,
+      endpointTypeFilter,
+      tagFilter,
+    ]
   )
 
   const activeFilterCount = useMemo(
     () =>
+      (categoryFilter !== 'all' ? 1 : 0) +
       (vendorFilter !== FILTER_ALL ? 1 : 0) +
       (groupFilter !== FILTER_ALL ? 1 : 0) +
       (quotaTypeFilter !== QUOTA_TYPES.ALL ? 1 : 0) +
       (endpointTypeFilter !== ENDPOINT_TYPES.ALL ? 1 : 0) +
       (tagFilter !== FILTER_ALL ? 1 : 0),
-    [vendorFilter, groupFilter, quotaTypeFilter, endpointTypeFilter, tagFilter]
+    [
+      categoryFilter,
+      vendorFilter,
+      groupFilter,
+      quotaTypeFilter,
+      endpointTypeFilter,
+      tagFilter,
+    ]
   )
 
   const clearFilters = useCallback(() => {
+    setCategoryFilter('all')
     updateFilters({
       vendor: undefined,
       group: undefined,
@@ -204,6 +241,9 @@ export function useFilters(models: PricingModel[]) {
   }, [updateFilters])
 
   return {
+    categoryFilter,
+    setCategoryFilter,
+    categoryModels,
     searchInput,
     sortBy,
     vendorFilter,

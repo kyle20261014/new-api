@@ -1,3 +1,5 @@
+import type { PerformanceSummary } from '@/features/performance-metrics/types'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -191,9 +193,29 @@ function getSortPrice(
  */
 export function sortModels(
   models: PricingModel[],
-  sortBy: string
+  sortBy: string,
+  metrics?: ReadonlyMap<string, PerformanceSummary>
 ): PricingModel[] {
   const sorted = [...models]
+
+  if (
+    sortBy === SORT_OPTIONS.RESPONSE_SPEED ||
+    sortBy === SORT_OPTIONS.SUCCESS_RATE
+  ) {
+    const field =
+      sortBy === SORT_OPTIONS.RESPONSE_SPEED ? 'avg_latency_ms' : 'success_rate'
+    const direction = sortBy === SORT_OPTIONS.RESPONSE_SPEED ? 1 : -1
+    return sorted.sort((a, b) => {
+      const left = metrics?.get(a.model_name)?.[field]
+      const right = metrics?.get(b.model_name)?.[field]
+      const missingLeft = left == null || !Number.isFinite(left)
+      const missingRight = right == null || !Number.isFinite(right)
+      if (missingLeft || missingRight) {
+        return Number(missingLeft) - Number(missingRight)
+      }
+      return direction * (left - right)
+    })
+  }
 
   const priceSort = PRICE_SORTS[sortBy as SortOption]
   if (priceSort) {
@@ -237,7 +259,8 @@ export function filterAndSortModels(
     endpointType: string
     tag: string
     sortBy: string
-  }
+  },
+  metrics?: ReadonlyMap<string, PerformanceSummary>
 ): PricingModel[] {
   let result = filterBySearch(models, filters.search)
   result = filterByVendor(result, filters.vendor)
@@ -245,7 +268,7 @@ export function filterAndSortModels(
   result = filterByQuotaType(result, filters.quotaType)
   result = filterByEndpointType(result, filters.endpointType)
   result = filterByTag(result, filters.tag)
-  result = sortModels(result, filters.sortBy)
+  result = sortModels(result, filters.sortBy, metrics)
 
   return result
 }
@@ -259,6 +282,33 @@ export function parseTags(tagsString?: string): string[] {
     .split(/[,;|\s]+/)
     .map((t) => t.trim())
     .filter(Boolean)
+}
+
+export const MODEL_CATEGORIES = [
+  'all',
+  'text',
+  'image',
+  'video',
+  'audio',
+] as const
+export type ModelCategory = (typeof MODEL_CATEGORIES)[number]
+
+const CATEGORY_TAGS: Record<Exclude<ModelCategory, 'all'>, string[]> = {
+  text: ['text', '文本模型'],
+  image: ['image', '图片模型'],
+  video: ['video', '视频模型'],
+  audio: ['audio', '音频模型'],
+}
+
+export function filterByCategory(
+  models: PricingModel[],
+  category: ModelCategory
+): PricingModel[] {
+  if (category === 'all') return models
+  return models.filter((model) => {
+    const tags = parseTags(model.tags).map((tag) => tag.toLowerCase())
+    return CATEGORY_TAGS[category].some((tag) => tags.includes(tag))
+  })
 }
 
 /**

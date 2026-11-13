@@ -124,9 +124,11 @@ function toGroupUptimeSeries(group: PerformanceGroup): UptimeDayPoint[] {
 export function ModelDetailsPerformance(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const metricsQuery = useQuery({
-    queryKey: ['perf-metrics', props.model.model_name],
+    queryKey: ['perf-metrics', props.model.model_name, 'recent'],
     queryFn: async () =>
-      requireServerSuccess(await getPerfMetrics(props.model.model_name, 24)),
+      requireServerSuccess(
+        await getPerfMetrics(props.model.model_name, 24, true)
+      ),
     staleTime: 60 * 1000,
   })
   const groups = useMemo(
@@ -174,6 +176,11 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
 
   return (
     <div className='flex flex-col gap-4'>
+      <p className='text-muted-foreground text-xs'>
+        {t(
+          'Statistics cover the latest 24 active hours within 7 days, including the current hour.'
+        )}
+      </p>
       <div className='grid grid-cols-1 gap-2 sm:grid-cols-3'>
         <StatCard
           icon={Timer}
@@ -183,7 +190,7 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
         />
         <StatCard
           icon={Timer}
-          label={t('Average latency')}
+          label={t('Response speed')}
           value={formatLatency(avgLatency)}
         />
         <StatCard
@@ -192,10 +199,10 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
           value={formatUptimePct(successRate)}
           hint={
             incidentCount > 0
-              ? t('{{count}} incidents in the last 24 hours', {
+              ? t('{{count}} incidents', {
                   count: incidentCount,
                 })
-              : t('No incidents in the last 24 hours')
+              : t('No incidents in the statistics window')
           }
           valueClassName={getSuccessRateTextClass(successRate)}
         />
@@ -237,7 +244,7 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
             },
             {
               id: 'latency',
-              header: t('Average latency'),
+              header: t('Response speed'),
               className: tableStyles.compactHeaderCellRight,
               cellClassName: tableStyles.compactMutedNumericCell,
               cell: (perf) => formatLatency(perf.avg_latency_ms),
@@ -262,7 +269,7 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
       <section>
         <SectionHeader
           icon={Timer}
-          title={t('Latency trend (last 24h)')}
+          title={t('TTFT trend')}
           description={t('Average TTFT')}
         />
         <LatencyTrendChart series={latencySeries} />
@@ -271,7 +278,7 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
       <section>
         <SectionHeader
           icon={HeartPulse}
-          title={t('Availability (last 24h)')}
+          title={t('Availability')}
           description={t(
             'Success rate excludes business rejections and includes the current partial hour.'
           )}

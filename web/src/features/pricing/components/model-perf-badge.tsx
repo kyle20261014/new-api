@@ -78,7 +78,10 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
 
   return (
     <div
-      aria-label={t('Performance metrics for the last 24 hours')}
+      aria-label={t('Recent performance metrics')}
+      title={t(
+        'Statistics cover the latest 24 active hours within 7 days, including the current hour.'
+      )}
       className={cn(
         'flex w-full min-w-0 items-center justify-between gap-3',
         props.className
@@ -119,9 +122,9 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
             )}
           </dd>
         </div>
-        <div title={t('Average latency')} className='shrink-0'>
+        <div title={t('Average total response time')} className='shrink-0'>
           <dt className='text-muted-foreground text-[11px] leading-4'>
-            {t('Latency short')}
+            {t('Response speed')}
           </dt>
           <dd className='mt-1 font-mono whitespace-nowrap'>
             {latencyText === '—' ? '—s' : latencyText}

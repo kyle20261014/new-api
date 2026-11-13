@@ -21,6 +21,9 @@ import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
+import { Button } from '@/components/ui/button'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 
 import {
   LoadingSkeleton,
@@ -34,10 +37,13 @@ import {
 } from './components'
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
+import { useModelPerformance } from './hooks/use-model-performance'
 import { usePricingData } from './hooks/use-pricing-data'
+import { MODEL_CATEGORIES, filterByCategory } from './lib/filters'
 
 export function Pricing() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [selectedModelName, setSelectedModelName] = useState<string | null>(
     null
   )
@@ -53,8 +59,12 @@ export function Pricing() {
     priceRate,
     usdExchangeRate,
   } = usePricingData()
+  const perfMap = useModelPerformance(models)
 
   const {
+    categoryFilter,
+    setCategoryFilter,
+    categoryModels,
     searchInput,
     sortBy,
     vendorFilter,
@@ -81,7 +91,24 @@ export function Pricing() {
     availableTags,
     clearFilters,
     clearSearch,
-  } = useFilters(models || [])
+  } = useFilters(models || [], perfMap)
+  const paginationKey = JSON.stringify([
+    searchInput,
+    sortBy,
+    vendorFilter,
+    groupFilter,
+    quotaTypeFilter,
+    endpointTypeFilter,
+    tagFilter,
+    categoryFilter,
+  ])
+  const categoryLabels = {
+    all: t('All'),
+    text: t('Text Models'),
+    image: t('Image Models'),
+    video: t('Video Models'),
+    audio: t('Audio Models'),
+  }
 
   const handleModelClick = useCallback((modelName: string) => {
     setSelectedModelName(modelName)
@@ -124,6 +151,8 @@ export function Pricing() {
     if (viewMode === VIEW_MODES.CARD) {
       return (
         <ModelCardGrid
+          key={paginationKey}
+          perfMap={perfMap}
           models={filteredModels}
           onModelClick={handleModelClick}
           priceRate={priceRate}
@@ -137,6 +166,7 @@ export function Pricing() {
 
     return (
       <PricingTable
+        key={paginationKey}
         models={filteredModels}
         priceRate={priceRate}
         usdExchangeRate={usdExchangeRate}
@@ -225,6 +255,32 @@ export function Pricing() {
             />
 
             <main className='min-w-0 space-y-4'>
+              <div
+                role='group'
+                aria-label={t('Model category')}
+                className='flex flex-wrap gap-2'
+              >
+                {MODEL_CATEGORIES.map((category) => (
+                  <Button
+                    key={category}
+                    type='button'
+                    size='sm'
+                    variant={
+                      categoryFilter === category ? 'default' : 'outline'
+                    }
+                    aria-pressed={categoryFilter === category}
+                    onClick={() => setCategoryFilter(category)}
+                  >
+                    {categoryLabels[category]}
+                    <span className='tabular-nums'>
+                      {formatNumber(
+                        filterByCategory(categoryModels, category).length,
+                        locale
+                      )}
+                    </span>
+                  </Button>
+                ))}
+              </div>
               <PricingToolbar
                 filteredCount={filteredModels.length}
                 totalCount={models?.length}
