@@ -20,6 +20,12 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import type { Product } from '@/features/mowan/idatariver/api'
+import {
+  FixedPackages,
+  FixedPaymentDialog,
+} from '@/features/mowan/idatariver/payment'
+import { useIdataRiver } from '@/features/mowan/idatariver/use-payment'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -57,12 +63,15 @@ import type {
 
 interface WalletProps {
   initialShowHistory?: boolean
+  initialTradeNo?: string
 }
 
 export function Wallet(props: WalletProps) {
   const { t } = useTranslation()
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
+  const [selectedFixedProduct, setSelectedFixedProduct] =
+    useState<Product | null>(null)
   const [topupAmount, setTopupAmount] = useState(0)
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
   const [selectedPaymentMethod, setSelectedPaymentMethod] =
@@ -124,6 +133,8 @@ export function Wallet(props: WalletProps) {
       setUserLoading(false)
     }
   }, [])
+
+  const idr = useIdataRiver(user?.id, props.initialTradeNo, fetchUser)
 
   useEffect(() => {
     fetchUser()
@@ -299,6 +310,16 @@ export function Wallet(props: WalletProps) {
             >
               <div id='wallet-add-funds' className='scroll-mt-4'>
                 <RechargeFormCard
+                  enableFixedPackages={idr.catalog?.enabled}
+                  fixedPackages={
+                    <FixedPackages
+                      flow={idr}
+                      onSelect={(product) => {
+                        setSelectedFixedProduct(product)
+                        idr.choose()
+                      }}
+                    />
+                  }
                   topupInfo={topupInfo}
                   presetAmounts={presetAmounts}
                   selectedPreset={selectedPreset}
@@ -376,6 +397,18 @@ export function Wallet(props: WalletProps) {
       <BillingHistoryDialog
         open={billingDialogOpen}
         onOpenChange={setBillingDialogOpen}
+        refreshKey={`${idr.order?.trade_no}:${idr.order?.status}:${idr.order?.refund_status}`}
+        onResumeIdataRiver={(trade_no) => {
+          setBillingDialogOpen(false)
+          setSelectedFixedProduct(null)
+          void idr.resume({ trade_no })
+        }}
+      />
+
+      <FixedPaymentDialog
+        flow={idr}
+        selected={selectedFixedProduct}
+        onClear={() => setSelectedFixedProduct(null)}
       />
 
       <CreemConfirmDialog

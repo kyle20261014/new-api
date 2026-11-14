@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Gift, ExternalLink, Loader2, Receipt, WalletCards } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -54,6 +54,8 @@ import type {
 import { CreemProductsSection } from './creem-products-section'
 
 interface RechargeFormCardProps {
+  fixedPackages?: ReactNode
+  enableFixedPackages?: boolean
   topupInfo: TopupInfo | null
   presetAmounts: PresetAmount[]
   selectedPreset: number | null
@@ -84,6 +86,8 @@ interface RechargeFormCardProps {
 }
 
 export function RechargeFormCard({
+  fixedPackages,
+  enableFixedPackages,
   topupInfo,
   presetAmounts,
   selectedPreset,
@@ -135,7 +139,8 @@ export function RechargeFormCard({
     topupInfo?.enable_stripe_topup ||
     enableWaffoTopup ||
     enableWaffoPancakeTopup
-  const hasAnyTopup = hasConfigurableTopup || enableCreemTopup
+  const hasAnyTopup =
+    hasConfigurableTopup || enableCreemTopup || enableFixedPackages
   const hasStandardPaymentMethods =
     Array.isArray(topupInfo?.pay_methods) && topupInfo.pay_methods.length > 0
   const hasWaffoPaymentMethods =
@@ -496,6 +501,8 @@ export function RechargeFormCard({
           </AlertDescription>
         </Alert>
       )}
+
+      {fixedPackages}
 
       {/* Creem Products Section */}
       {enableCreemTopup &&

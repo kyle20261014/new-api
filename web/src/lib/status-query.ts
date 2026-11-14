@@ -82,6 +82,12 @@ export function mapStatusDataToConfig(
       data.usd_exchange_rate,
       DEFAULT_CURRENCY_CONFIG.usdExchangeRate
     ),
+    usdExchangeRateValid:
+      (typeof data.usd_exchange_rate === 'number' ||
+        (typeof data.usd_exchange_rate === 'string' &&
+          data.usd_exchange_rate.trim() !== '')) &&
+      Number.isFinite(Number(data.usd_exchange_rate)) &&
+      Number(data.usd_exchange_rate) > 0,
     customCurrencySymbol:
       (data.custom_currency_symbol as string | undefined)?.trim() ||
       DEFAULT_CURRENCY_CONFIG.customCurrencySymbol,

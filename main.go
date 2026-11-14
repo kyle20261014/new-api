@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -304,6 +305,11 @@ func InitResources() error {
 	if err != nil {
 		common.FatalLog(common.LogText("failed to initialize database: %s", err.Error()))
 		return err
+	}
+	if common.IsMasterNode {
+		if err = model.MigrateIdataRiver(model.DB); err != nil {
+			return fmt.Errorf("initialize iDataRiver payment schema: %w", err)
+		}
 	}
 	if err = authz.Init(model.DB); err != nil {
 		common.FatalLog(common.LogText("failed to initialize authorization: %s", err.Error()))
