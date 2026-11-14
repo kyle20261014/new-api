@@ -1,0 +1,320 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+import * as client from './api'
+import type { Order, OrderLookup, Payment, Product } from './api'
+
+function readLookup(key: string): OrderLookup | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(key) || 'null')
+    if (value && typeof value === 'object') {
+      if (
+        'trade_no' in value &&
+        typeof value.trade_no === 'string' &&
+        value.trade_no.length <= 128
+      ) {
+        return { trade_no: value.trade_no }
+      }
+      if (
+        'request_id' in value &&
+        typeof value.request_id === 'string' &&
+        value.request_id.length <= 128
+      ) {
+        return {
+          request_id: value.request_id,
+          sku_id:
+            'sku_id' in value &&
+            typeof value.sku_id === 'string' &&
+            value.sku_id.length <= 128
+              ? value.sku_id
+              : undefined,
+        }
+      }
+    }
+  } catch {
+    /* History remains available if browser storage is unavailable. */
+  }
+  return null
+}
+
+export function useIdataRiver(
+  userId: number | undefined,
+  initialTradeNo: string | undefined,
+  onSettled: () => Promise<void>
+) {
+  const [catalog, setCatalog] = useState<{
+    enabled: boolean
+    products: Product[]
+  } | null>(null)
+  const [catalogError, setCatalogError] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [order, setOrder] = useState<Order | null>(null)
+  const [lookup, setLookup] = useState<OrderLookup | null>(null)
+  const currentLookup = useRef('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(false)
+  const [payment, setPayment] = useState<Payment | null>(null)
+  const quote = useRef<(Payment & { trade_no: string; method: string }) | null>(
+    null
+  )
+  const quoteVersion = useRef(0)
+  const clearPayment = useCallback(() => {
+    quoteVersion.current++
+    quote.current = null
+    setPayment(null)
+  }, [])
+  const [open, updateOpen] = useState(false)
+  const setOpen = (value: boolean) => {
+    if (!value) clearPayment()
+    updateOpen(value)
+  }
+  const flight = useRef(false)
+  const account = useRef(userId)
+  account.current = userId
+  const storageKey = userId ? `mowan-idr:v1:${userId}` : ''
+  const save = useCallback(
+    (value: OrderLookup | null) => {
+      currentLookup.current = value ? JSON.stringify(value) : ''
+      setLookup(value)
+      try {
+        if (storageKey) {
+          if (value) localStorage.setItem(storageKey, JSON.stringify(value))
+          else localStorage.removeItem(storageKey)
+        }
+      } catch {
+        /* The server's account-scoped order history is the fallback. */
+      }
+    },
+    [storageKey]
+  )
+
+  const load = useCallback(async () => {
+    if (!userId) return
+    setLoading(true)
+    setCatalogError(false)
+    try {
+      const res = await client.products()
+      if (account.current !== userId) return
+      if (!res.success || !res.data) throw new Error()
+      setCatalog(res.data)
+    } catch {
+      if (account.current === userId) setCatalogError(true)
+    } finally {
+      if (account.current === userId) setLoading(false)
+    }
+  }, [userId])
+
+  const accept = useCallback(
+    (value: Order) => {
+      if (
+        quote.current &&
+        (quote.current.trade_no !== value.trade_no ||
+          !value.can_pay ||
+          value.query_error ||
+          !value.payment_methods.some(
+            (m) => m.method === quote.current?.method
+          ))
+      ) {
+        clearPayment()
+      }
+      setOrder(value)
+      setError(value.query_error)
+      save(client.pending(value) ? { trade_no: value.trade_no } : null)
+      if (value.credited || value.platform_status === 'REFUND') void onSettled()
+    },
+    [save, onSettled, clearPayment]
+  )
+
+  const query = useCallback(
+    async (value: OrderLookup) => {
+      if (flight.current || !userId) return null
+      flight.current = true
+      setBusy(true)
+      try {
+        const res = await client.check(value)
+        if (account.current !== userId) return null
+        if (!res.success || !res.data) throw new Error()
+        accept(res.data)
+        return res.data
+      } catch {
+        if (account.current === userId) {
+          clearPayment()
+          setError(true)
+        }
+        return null
+      } finally {
+        flight.current = false
+        if (account.current === userId) setBusy(false)
+      }
+    },
+    [userId, accept, clearPayment]
+  )
+
+  useEffect(() => {
+    setOrder(null)
+    clearPayment()
+    setError(false)
+    updateOpen(false)
+    setCatalog(null)
+    const saved = storageKey ? readLookup(storageKey) : null
+    const restored = initialTradeNo ? { trade_no: initialTradeNo } : saved
+    currentLookup.current = restored ? JSON.stringify(restored) : ''
+    setLookup(restored)
+    if (restored && userId) updateOpen(true)
+    void load()
+  }, [userId, storageKey, initialTradeNo, load, clearPayment])
+
+  const lookupId = lookup ? JSON.stringify(lookup) : ''
+  useEffect(() => {
+    if (!lookupId || !userId || lookupId !== currentLookup.current) return
+    const value: OrderLookup = JSON.parse(lookupId)
+    let stopped = false
+    let tries = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = async () => {
+      const current = await query(value)
+      tries++
+      if (!stopped && tries < 12 && (!current || client.pending(current))) {
+        timer = setTimeout(poll, 5000)
+      }
+    }
+    void poll()
+    const recover = () => {
+      if (!stopped && document.visibilityState === 'visible') void query(value)
+    }
+    window.addEventListener('focus', recover)
+    document.addEventListener('visibilitychange', recover)
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+      window.removeEventListener('focus', recover)
+      document.removeEventListener('visibilitychange', recover)
+    }
+  }, [lookupId, query, userId])
+
+  const create = async (product: Pick<Product, 'sku_id'>, retry = false) => {
+    if (!userId || flight.current) return
+    if (
+      lookup &&
+      (!retry ||
+        !('request_id' in lookup) ||
+        (lookup.sku_id && lookup.sku_id !== product.sku_id))
+    ) {
+      return
+    }
+    const request_id =
+      lookup && 'request_id' in lookup ? lookup.request_id : crypto.randomUUID()
+    // Persist before sending: a lost response must never trigger another create.
+    // Manual retries reuse this identity; the server never replays a persisted attempt.
+    save({ request_id, sku_id: product.sku_id })
+    flight.current = true
+    setBusy(true)
+    setError(false)
+    try {
+      const res = await client.create(product.sku_id, request_id)
+      if (account.current !== userId) return
+      if (!res.success || !res.data) throw new Error()
+      accept(res.data)
+    } catch {
+      if (account.current === userId) setError(true)
+    } finally {
+      flight.current = false
+      if (account.current === userId) setBusy(false)
+    }
+  }
+
+  const resume = async (value: OrderLookup) => {
+    if (flight.current) return
+    setOrder(null)
+    clearPayment()
+    setOpen(true)
+    save(value)
+    await query(value)
+  }
+
+  const pay = async (method: string) => {
+    if (!order || flight.current || !userId) return
+    clearPayment()
+    const version = quoteVersion.current
+    const current = await query({ trade_no: order.trade_no })
+    if (
+      account.current !== userId ||
+      version !== quoteVersion.current ||
+      !current?.can_pay ||
+      current.query_error ||
+      !current.payment_methods.some((m) => m.method === method)
+    ) {
+      return
+    }
+    flight.current = true
+    setBusy(true)
+    try {
+      const res = await client.pay(current.trade_no, method)
+      if (account.current !== userId || version !== quoteVersion.current) return
+      if (!res.success || !res.data) throw new Error()
+      if ('trade_no' in res.data) accept(res.data)
+      if (!('pay_url' in res.data)) return
+      const url = client.paymentUrl(res.data.pay_url)
+      if (!url) throw new Error()
+      setPayment(res.data)
+      quote.current = { ...res.data, trade_no: current.trade_no, method }
+      save({ trade_no: current.trade_no })
+    } catch {
+      if (account.current === userId) setError(true)
+    } finally {
+      flight.current = false
+      if (account.current === userId) setBusy(false)
+    }
+  }
+
+  const continuePayment = (method: string) => {
+    const ready = quote.current
+    if (
+      !ready ||
+      flight.current ||
+      error ||
+      !order?.can_pay ||
+      ready.trade_no !== order.trade_no ||
+      ready.method !== method ||
+      !order.payment_methods.some((m) => m.method === method)
+    ) {
+      return
+    }
+    const url = client.paymentUrl(ready.pay_url)
+    if (!url) {
+      clearPayment()
+      setError(true)
+      return
+    }
+    // Consume synchronously so a double click cannot reuse this confirmation.
+    clearPayment()
+    save({ trade_no: order.trade_no })
+    window.location.assign(url)
+  }
+
+  const choose = () => {
+    setOrder(null)
+    clearPayment()
+    setError(false)
+    setOpen(true)
+  }
+  return {
+    catalog,
+    catalogError,
+    loading,
+    load,
+    order,
+    lookup,
+    busy,
+    error,
+    payment,
+    open,
+    setOpen,
+    choose,
+    create,
+    resume,
+    pay,
+    continuePayment,
+    clearPayment,
+    query,
+  }
+}

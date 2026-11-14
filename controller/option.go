@@ -85,7 +85,7 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" {
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == "IdataRiverKeyConfigured" {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -107,6 +107,9 @@ func GetOptions(c *gin.Context) {
 	}
 	options = append(options, &model.Option{
 		Key: "ResendKeyConfigured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["ResendApiKey"]) != ""),
+	})
+	options = append(options, &model.Option{
+		Key: "IdataRiverKeyConfigured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["IdataRiverApiKey"]) != ""),
 	})
 	common.OptionMapRWMutex.Unlock()
 	// Display the same effective expressions used by pricing and settlement,

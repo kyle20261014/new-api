@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Loader2 } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -40,11 +41,14 @@ interface PaymentConfirmDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
-  topupAmount: number
-  paymentAmount: number
-  paymentMethod: PaymentMethod | undefined
-  calculating: boolean
+  topupAmount?: number
+  paymentAmount?: number
+  paymentMethod?: PaymentMethod
+  calculating?: boolean
   processing: boolean
+  fixedContent?: ReactNode
+  confirmDisabled?: boolean
+  confirmLabel?: string
   discountRate?: number
   usdExchangeRate?: number
 }
@@ -53,11 +57,14 @@ export function PaymentConfirmDialog({
   open,
   onOpenChange,
   onConfirm,
-  topupAmount,
-  paymentAmount,
+  topupAmount = 0,
+  paymentAmount = 0,
   paymentMethod,
   calculating,
   processing,
+  fixedContent,
+  confirmDisabled,
+  confirmLabel,
   discountRate = DEFAULT_DISCOUNT_RATE,
   usdExchangeRate = 1,
 }: PaymentConfirmDialogProps) {
@@ -78,76 +85,84 @@ export function PaymentConfirmDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        <div className='space-y-3 py-3 sm:space-y-4 sm:py-4'>
-          <div className='flex items-center justify-between'>
-            <span className='text-muted-foreground text-sm'>
-              {t('Topup Amount')}
-            </span>
-            <span className='text-lg font-semibold'>
-              {formatLocalCurrencyAmount(topupAmount * usdExchangeRate, {
-                digitsLarge: 2,
-                digitsSmall: 2,
-                abbreviate: false,
-              })}
-            </span>
-          </div>
-
-          <div className='flex items-center justify-between'>
-            <span className='text-muted-foreground text-sm'>
-              {t('You Pay')}
-            </span>
-            {calculating ? (
-              <Skeleton className='h-6 w-24' />
-            ) : (
-              <div className='flex items-baseline gap-2'>
-                <span className='text-2xl font-semibold'>
-                  {formatCurrency(paymentAmount)}
-                </span>
-                {hasDiscount && (
-                  <span className='text-muted-foreground text-sm line-through'>
-                    {formatCurrency(originalAmount)}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-
-          {hasDiscount && !calculating && (
-            <div className='bg-muted/50 rounded-lg p-3'>
-              <div className='flex items-center justify-between text-sm'>
-                <span className='text-muted-foreground'>{t('You save')}</span>
-                <span className='font-semibold text-green-600'>
-                  {formatCurrency(discountAmount)}
-                </span>
-              </div>
-            </div>
-          )}
-
-          <div className='border-t pt-4'>
+        {fixedContent ?? (
+          <div className='space-y-3 py-3 sm:space-y-4 sm:py-4'>
             <div className='flex items-center justify-between'>
               <span className='text-muted-foreground text-sm'>
-                {t('Payment Method')}
+                {t('Topup Amount')}
               </span>
-              <div className='flex items-center gap-2'>
-                {getPaymentIcon(
-                  paymentMethod?.type,
-                  'h-4 w-4',
-                  paymentMethod?.icon,
-                  paymentMethod?.name
-                )}
-                <span className='font-medium'>{paymentMethod?.name}</span>
+              <span className='text-lg font-semibold'>
+                {formatLocalCurrencyAmount(topupAmount * usdExchangeRate, {
+                  digitsLarge: 2,
+                  digitsSmall: 2,
+                  abbreviate: false,
+                })}
+              </span>
+            </div>
+
+            <div className='flex items-center justify-between'>
+              <span className='text-muted-foreground text-sm'>
+                {t('You Pay')}
+              </span>
+              {calculating ? (
+                <Skeleton className='h-6 w-24' />
+              ) : (
+                <div className='flex items-baseline gap-2'>
+                  <span className='text-2xl font-semibold'>
+                    {formatCurrency(paymentAmount)}
+                  </span>
+                  {hasDiscount && (
+                    <span className='text-muted-foreground text-sm line-through'>
+                      {formatCurrency(originalAmount)}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {hasDiscount && !calculating && (
+              <div className='bg-muted/50 rounded-lg p-3'>
+                <div className='flex items-center justify-between text-sm'>
+                  <span className='text-muted-foreground'>{t('You save')}</span>
+                  <span className='font-semibold text-green-600'>
+                    {formatCurrency(discountAmount)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className='border-t pt-4'>
+              <div className='flex items-center justify-between'>
+                <span className='text-muted-foreground text-sm'>
+                  {t('Payment Method')}
+                </span>
+                <div className='flex items-center gap-2'>
+                  {getPaymentIcon(
+                    paymentMethod?.type,
+                    'h-4 w-4',
+                    paymentMethod?.icon,
+                    paymentMethod?.name
+                  )}
+                  <span className='font-medium'>{paymentMethod?.name}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
         <AlertDialogFooter className='grid grid-cols-2 gap-2 sm:flex'>
           <AlertDialogCancel disabled={processing}>
             {t('Cancel')}
           </AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} disabled={processing}>
+          <AlertDialogAction
+            onClick={(event) => {
+              if (fixedContent) event.preventDefault()
+              onConfirm()
+            }}
+            disabled={processing || confirmDisabled}
+          >
             {processing && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-            {t('Confirm Payment')}
+            {confirmLabel ?? t('Confirm Payment')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

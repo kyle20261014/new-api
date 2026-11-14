@@ -13,16 +13,17 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
-	Money           float64 `json:"money"`
-	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
+	Id              int                `json:"id"`
+	UserId          int                `json:"user_id" gorm:"index"`
+	Amount          int64              `json:"amount"`
+	Money           float64            `json:"money"`
+	TradeNo         string             `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod   string             `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider string             `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime      int64              `json:"create_time"`
+	CompleteTime    int64              `json:"complete_time"`
+	Status          string             `json:"status"`
+	IdataRiver      *IdataRiverSummary `json:"idatariver,omitempty" gorm:"-"`
 }
 
 const (
@@ -469,6 +470,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return common.NewMessage("Top-up order does not exist")
 		}
 
+		if topUp.PaymentProvider == PaymentProviderIdataRiver {
+			return common.NewMessage("iDataRiver orders must be verified through the payment platform")
+		}
 		// 幂等处理：已成功直接返回
 		if topUp.Status == common.TopUpStatusSuccess {
 			return nil

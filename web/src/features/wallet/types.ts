@@ -253,6 +253,7 @@ export type TopupStatus = 'success' | 'pending' | 'expired'
  * Topup billing record
  */
 export interface TopupRecord {
+  idatariver?: import('@/features/mowan/idatariver/api').Order | null
   /** Record ID */
   id: number
   /** User ID */

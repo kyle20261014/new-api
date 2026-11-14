@@ -323,3 +323,31 @@ func TestPreConsumeMultiplierRejectsInvalidRuntimeAndOverflow(t *testing.T) {
 		assert.Nil(t, info.Billing)
 	}
 }
+
+func TestIdataRiverOptionsNeverExposeMerchantSecret(t *testing.T) {
+	common.OptionMapRWMutex.Lock()
+	previous := common.OptionMap
+	common.OptionMap = map[string]string{"IdataRiverApiKey": "private-merchant-secret", "IdataRiverEnabled": "false", "IdataRiverKeyConfigured": "false", "IdataRiverProducts": "[]"}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() { common.OptionMapRWMutex.Lock(); common.OptionMap = previous; common.OptionMapRWMutex.Unlock() })
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/option/", nil)
+	GetOptions(ctx)
+	assert.NotContains(t, recorder.Body.String(), "private-merchant-secret")
+	assert.NotContains(t, recorder.Body.String(), `"IdataRiverApiKey"`)
+	var response struct {
+		Success bool           `json:"success"`
+		Data    []model.Option `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	found := false
+	for _, option := range response.Data {
+		if option.Key == "IdataRiverKeyConfigured" {
+			assert.Equal(t, "true", option.Value)
+			found = true
+		}
+	}
+	assert.True(t, found, "the configured flag is computed from the real secret, never a persisted flag")
+}

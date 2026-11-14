@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"maps"
 	"strconv"
 	"strings"
@@ -33,6 +34,9 @@ func AllOption() ([]*Option, error) {
 func InitOptionMap() {
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)
+	for key, value := range setting.IdataRiverOptionDefaults() {
+		common.OptionMap[key] = value
+	}
 
 	// 添加原有的系统配置
 	common.OptionMap["FileUploadPermission"] = strconv.Itoa(common.FileUploadPermission)
@@ -232,6 +236,9 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if err := setting.ValidateIdataRiverOption(key, value); err != nil {
+		return err
+	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
@@ -275,6 +282,15 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if strings.HasPrefix(key, "IdataRiver") {
+		if err := UpdateOptionsBulk(map[string]string{key: value}); err != nil {
+			if setting.ValidateIdataRiverOption(key, value) != nil {
+				return setting.ValidateIdataRiverOption(key, value)
+			}
+			return common.NewMessage("Failed to save iDataRiver settings")
+		}
+		return nil
+	}
 	if IsRequestPolicyOption(key) {
 		return UpdateRequestPolicyOptions(map[string]string{key: value})
 	}
@@ -309,6 +325,12 @@ func UpdateOption(key string, value string) error {
 // is touched — safe for callers that must commit a set of related options
 // atomically (e.g. payment gateway binding).
 func UpdateOptionsBulk(values map[string]string) error {
+	if _, ok := values["IdataRiverApiKey"]; ok {
+		values = maps.Clone(values)
+		if strings.TrimSpace(values["IdataRiverApiKey"]) == "" {
+			delete(values, "IdataRiverApiKey")
+		}
+	}
 	if len(values) == 0 {
 		return nil
 	}
@@ -322,6 +344,30 @@ func UpdateOptionsBulk(values map[string]string) error {
 		if err := validateOptionValue(key, value); err != nil {
 			return err
 		}
+	}
+	idrConfig := setting.GetIdataRiverConfig()
+	idrChanged := false
+	for key, value := range values {
+		if strings.HasPrefix(key, "IdataRiver") {
+			idrChanged = true
+		}
+		switch key {
+		case "IdataRiverEnabled":
+			idrConfig.Enabled = value == "true"
+		case "IdataRiverApiKey":
+			idrConfig.APIKey = value
+		case "IdataRiverMerchantId":
+			idrConfig.MerchantID = value
+		case "IdataRiverProjectId":
+			idrConfig.ProjectID = value
+		case "IdataRiverCallbackOrigin":
+			idrConfig.CallbackOrigin = value
+		case "IdataRiverProducts":
+			_ = common.UnmarshalJsonStr(value, &idrConfig.Products)
+		}
+	}
+	if idrChanged && idrConfig.Enabled && !idrConfig.Configured() {
+		return common.NewMessage("Invalid iDataRiver product configuration")
 	}
 	var policySnapshot *RequestPolicySnapshot
 	for key := range values {
@@ -343,7 +389,14 @@ func UpdateOptionsBulk(values map[string]string) error {
 		}
 	}
 
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	optionDB := DB
+	for key := range values {
+		if strings.HasPrefix(key, "IdataRiver") {
+			optionDB = idataRiverDB(context.Background())
+			break
+		}
+	}
+	err := optionDB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
 			option := Option{Key: k}
 			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {

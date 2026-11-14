@@ -36,6 +36,8 @@ export interface CurrencyConfig {
   quotaPerUnit: number
   /** Exchange rate from USD to the configured local currency */
   usdExchangeRate: number
+  /** True only when status supplied a finite positive rate; absent in legacy storage. */
+  usdExchangeRateValid?: boolean
   /** Custom currency symbol configured by the admin (used when type === CUSTOM) */
   customCurrencySymbol: string
   /** Exchange rate from USD to the custom currency (used when type === CUSTOM) */

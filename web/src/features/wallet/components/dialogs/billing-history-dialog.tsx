@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -44,6 +44,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  CnyReference,
+  CnyReferenceNote,
+} from '@/features/mowan/idatariver/cny-reference'
+import { formatPaymentAmount } from '@/features/mowan/idatariver/format'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
@@ -56,15 +61,20 @@ import {
 } from '../../lib/billing'
 
 interface BillingHistoryDialogProps {
+  onResumeIdataRiver?: (tradeNo: string) => void
+  refreshKey?: string
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
 export function BillingHistoryDialog({
+  onResumeIdataRiver,
+  refreshKey,
   open,
   onOpenChange,
 }: BillingHistoryDialogProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const language = i18n.resolvedLanguage || i18n.language
   const {
     records,
     total,
@@ -78,7 +88,12 @@ export function BillingHistoryDialog({
     handlePageSizeChange,
     handleSearch,
     handleCompleteOrder,
+    refresh,
   } = useBillingHistory()
+
+  useEffect(() => {
+    if (open) void refresh()
+  }, [open, refresh, refreshKey])
 
   const [confirmTradeNo, setConfirmTradeNo] = useState<string | null>(null)
   const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
@@ -240,44 +255,75 @@ export function BillingHistoryDialog({
                             {t('Payment Method')}
                           </Label>
                           <div className='text-sm font-medium'>
-                            {getPaymentMethodName(record.payment_method, t)}
+                            {record.idatariver
+                              ? 'iDataRiver'
+                              : getPaymentMethodName(record.payment_method, t)}
                           </div>
                         </div>
                         <div className='space-y-1'>
                           <Label className='text-muted-foreground text-xs'>
-                            {t('Amount')}
+                            {record.idatariver
+                              ? t('Balance credit (USD)')
+                              : t('Amount')}
                           </Label>
                           <div className='text-sm font-semibold'>
-                            {formatCurrencyFromUSD(record.amount, {
-                              digitsLarge: 2,
-                              digitsSmall: 2,
-                              abbreviate: false,
-                            })}
+                            {record.idatariver
+                              ? `${formatPaymentAmount(record.idatariver.quota, language)} USD`
+                              : formatCurrencyFromUSD(record.amount, {
+                                  digitsLarge: 2,
+                                  digitsSmall: 2,
+                                  abbreviate: false,
+                                })}
                           </div>
+                          {record.idatariver && (
+                            <CnyReference usd={record.idatariver.quota} />
+                          )}
                         </div>
                         <div className='space-y-1'>
                           <Label className='text-muted-foreground text-xs'>
-                            {t('Payment')}
+                            {record.idatariver
+                              ? t('Package price (USD)')
+                              : t('Payment')}
                           </Label>
                           <div className='text-sm font-semibold text-red-600'>
-                            {formatNumber(record.money)}
+                            {record.idatariver
+                              ? `${formatPaymentAmount(record.idatariver.price, language)} USD`
+                              : formatNumber(record.money)}
                           </div>
+                          {record.idatariver && (
+                            <CnyReference usd={record.idatariver.price} />
+                          )}
                         </div>
                       </div>
+                      {record.idatariver && <CnyReferenceNote />}
 
-                      {/* Admin Actions */}
-                      {isAdmin && record.status === 'pending' && (
+                      {record.idatariver && onResumeIdataRiver && (
                         <div className='mt-4 flex justify-end'>
                           <Button
-                            size='sm'
                             variant='outline'
-                            onClick={() => setConfirmTradeNo(record.trade_no)}
-                            disabled={completing}
+                            size='sm'
+                            onClick={() => onResumeIdataRiver(record.trade_no)}
                           >
-                            {t('Complete Order')}
+                            {t('Check Status')}
                           </Button>
                         </div>
                       )}
+
+                      {/* iDataRiver is settled only through trusted platform reconciliation. */}
+                      {isAdmin &&
+                        record.status === 'pending' &&
+                        !record.idatariver && (
+                          <div className='mt-4 flex justify-end'>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() => setConfirmTradeNo(record.trade_no)}
+                              disabled={completing}
+                            >
+                              {t('Complete Order')}
+                            </Button>
+                          </div>
+                        )}
                     </div>
                   )
                 })}

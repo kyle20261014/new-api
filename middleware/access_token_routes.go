@@ -41,6 +41,10 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	"GET /api/mowan/idatariver/products": accessTokenScopeRule("wallet:read"),
+	"POST /api/mowan/idatariver/order":   accessTokenScopeRule("wallet:write"),
+	"POST /api/mowan/idatariver/pay":     accessTokenScopeRule("wallet:write"),
+	"POST /api/mowan/idatariver/check":   accessTokenScopeRule("wallet:read"),
 	// router/api-router.go: top level
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),
 	"GET /api/status/test":                accessTokenScopeRule("log:read"),
