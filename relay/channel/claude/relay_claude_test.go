@@ -1,23 +1,31 @@
 package claude
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/mowan/smartrouting"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func commonPointer[T any](value T) *T {
@@ -501,4 +509,125 @@ func TestClaudeResponsePassesInputTransformationsThrough(t *testing.T) {
 		transformations + `,"usage":{"input_tokens":5,"output_tokens":1}}}`
 	require.Nil(t, HandleStreamResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, event))
 	assert.Contains(t, w.Body.String(), "data: "+event+"\n")
+}
+
+func TestClaudeProviderErrorFramesRetainRoutingObservation(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	for _, path := range []string{"json", "stream", "responses", "responses_delivered"} {
+		for _, errorType := range []string{"api_error", "server_error", "overloaded_error", "rate_limit_error", "invalid_request_error", "authentication_error", "permission_error", "billing_error", "parse_error"} {
+			for _, canceled := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/canceled=%t", path, errorType, canceled), func(t *testing.T) {
+					db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+					require.NoError(t, err)
+					sqlDB, err := db.DB()
+					require.NoError(t, err)
+					sqlDB.SetMaxOpenConns(1)
+					require.NoError(t, db.AutoMigrate(&model.Channel{}))
+					require.NoError(t, model.MigrateRoutingMetrics(db))
+					previousDB, previousType := model.DB, common.MainDatabaseType()
+					model.DB = db
+					common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+					t.Cleanup(func() {
+						assert.NoError(t, service.FlushRoutingMetrics(context.Background()))
+						model.DB = previousDB
+						common.SetMainDatabaseType(previousType)
+						require.NoError(t, sqlDB.Close())
+					})
+					channel := &model.Channel{Type: constant.ChannelTypeAnthropic, Key: "fixture-key"}
+					require.NoError(t, db.Create(channel).Error)
+					writer := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(writer)
+					requestPath, protocol := "/v1/messages", "sync"
+					if strings.HasPrefix(path, "responses") {
+						requestPath = "/v1/responses"
+					}
+					if path != "json" {
+						protocol = "stream"
+					}
+					c.Request = httptest.NewRequest(http.MethodPost, requestPath, nil)
+					c.Set(smartrouting.ContextKey, &model.TokenRouting{Mode: "smart"})
+					require.NoError(t, service.BindRoutingOrigin(c, "", "default", channel.Id))
+					plan := service.RoutingPlanFor(c)
+					plan.Model, plan.Sent = "claude-sonnet-4-6", 1
+					c.Set("mowan_routing_send_claimed", true)
+					require.NoError(t, service.StartRoutingAttempt(c, protocol))
+					ctx, cancel := context.WithCancel(c.Request.Context())
+					c.Request = c.Request.WithContext(ctx)
+					t.Cleanup(cancel)
+					body := fmt.Sprintf(`{"type":"error","error":{"type":%q,"message":"provider message"}}`, errorType)
+					if errorType == "parse_error" {
+						body = "{"
+					}
+					if path != "json" {
+						body = "data: " + body + "\n\n"
+					}
+					if path == "responses_delivered" {
+						body = strings.Join([]string{
+							`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"usage":{"input_tokens":2,"output_tokens":3}}}`,
+							`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+							`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`,
+							body,
+						}, "\n\n")
+					}
+					resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}
+					info := &relaycommon.RelayInfo{RelayFormat: types.RelayFormatClaude, IsStream: path != "json", DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-sonnet-4-6"}}
+					var usage *dto.Usage
+					var apiErr *types.NewAPIError
+					switch path {
+					case "json":
+						if canceled {
+							cancel()
+						}
+						usage, apiErr = ClaudeHandler(c, resp, info)
+					case "stream":
+						usage, apiErr = ClaudeStreamHandler(c, resp, info)
+					default:
+						info.RelayFormat = types.RelayFormatOpenAIResponses
+						usage, apiErr = ClaudeResponsesStreamHandler(c, resp, info)
+					}
+					if strings.HasPrefix(path, "responses") {
+						require.Nil(t, apiErr, "delivered protocol failure retains the original billable usage contract")
+						require.NotNil(t, usage)
+						if path == "responses_delivered" {
+							assert.Equal(t, 2, usage.PromptTokens)
+							assert.Equal(t, 3, usage.CompletionTokens)
+						} else {
+							assert.Zero(t, usage.PromptTokens)
+							assert.Zero(t, usage.CompletionTokens)
+						}
+						assert.Contains(t, writer.Body.String(), "response.failed")
+					} else {
+						require.NotNil(t, apiErr)
+						assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+						if errorType != "parse_error" {
+							assert.Equal(t, types.ErrorCode(errorType), apiErr.GetErrorCode())
+							assert.Equal(t, "provider message", apiErr.Error())
+							assert.Equal(t, types.ClaudeError{Type: errorType, Message: "provider message"}, apiErr.ToClaudeError())
+						}
+					}
+					if canceled {
+						cancel()
+					}
+					service.FinishRoutingSend(c, apiErr, false, 0)
+					service.FinishRoutingSend(c, apiErr, false, 0)
+					key, err := service.RoutingObservationKey(c, "claude-sonnet-4-6", "default", channel, protocol)
+					require.NoError(t, err)
+					view, err := (model.RoutingMetricsStore{DB: db}).ReadHealth(key, model.RoutingStageAttempt, 0, time.Time{})
+					require.NoError(t, err)
+					wantFailure, wantRate := int64(0), int64(0)
+					if errorType == "api_error" || errorType == "server_error" || errorType == "overloaded_error" || errorType == "rate_limit_error" || (errorType == "parse_error" && !canceled) {
+						wantFailure = 1
+					}
+					if errorType == "rate_limit_error" {
+						wantRate = 1
+					}
+					assert.Equal(t, wantFailure, view.Failures5m)
+					assert.Equal(t, wantFailure, view.Eligible5m)
+					assert.Equal(t, wantRate, view.RateLimited60s)
+				})
+			}
+		}
+	}
 }

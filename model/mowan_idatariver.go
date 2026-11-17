@@ -2,7 +2,6 @@ package model
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -198,17 +197,28 @@ func GetIdataRiverTradeNoByContact(ctx context.Context, contact string) (string,
 
 // Only call after the server client verifies the complete immutable snapshot.
 // SQL CAS protects SQLite as well as row-locking MySQL/PostgreSQL. No external
-// network call is made while holding these rows, except the wallet cache CAS.
+// network call is made while holding rows. Lock order is User, TopUp, order.
 func ReconcileIdataRiverOrder(ctx context.Context, tradeNo, platformID, status, callerIP string) error {
 	if status != "NEW" && status != "DONE" && status != "EXPIRED" && status != "REFUND" {
 		return ErrTopUpStatusInvalid
 	}
 	var t TopUp
 	var s IdataRiverOrder
-	credited, reclaimed, cacheReserved, refundRecorded := false, false, false, false
+	var owner TopUp
+	if err := idataRiverDB(ctx).Select("user_id").Where("trade_no = ? AND payment_provider = ?", tradeNo, PaymentProviderIdataRiver).First(&owner).Error; err != nil {
+		return err
+	}
+	credited, refundRecorded := false, false
 	err := idataRiverDB(ctx).Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := lockForUpdate(tx).Select("id").First(&user, owner.UserId).Error; err != nil {
+			return err
+		}
 		if err := lockForUpdate(tx).Where("trade_no = ? AND payment_provider = ?", tradeNo, PaymentProviderIdataRiver).First(&t).Error; err != nil {
 			return err
+		}
+		if t.UserId != owner.UserId {
+			return ErrTopUpStatusInvalid
 		}
 		if err := lockForUpdate(tx).Where("trade_no = ? AND platform_order_id = ? AND user_id = ?", tradeNo, platformID, t.UserId).First(&s).Error; err != nil {
 			return err
@@ -259,34 +269,13 @@ func ReconcileIdataRiverOrder(ctx context.Context, tradeNo, platformID, status, 
 				if s.CreditedQuota != s.Quota {
 					return ErrInvalidTopUpQuota
 				}
-				var user User
-				if err := lockForUpdate(tx).Select("id").First(&user, t.UserId).Error; err != nil {
+				refundStatus = IdataRiverRefundManualRequired
+				recovered, err := reserveUserQuotaTx(tx, t.UserId, s.CreditedQuota)
+				if err != nil {
 					return err
 				}
-				refundStatus = IdataRiverRefundManualRequired
-				canRecover := true
-				if common.RedisEnabled {
-					result, cacheErr := common.RDB.Eval(ctx, userQuotaReserveScript, []string{getUserCacheKey(t.UserId)}, s.CreditedQuota, t.UserId, userCacheSchemaVersion).Int()
-					if cacheErr != nil {
-						return errors.New("wallet cache unavailable")
-					}
-					cacheReserved = result == 1
-					canRecover = result != 0
-					// With deferred DB consumption a missing cache is not evidence
-					// of sufficient funds. Keep the refund retryable.
-					if result == -1 && common.BatchUpdateEnabled {
-						return errors.New("live wallet balance unavailable")
-					}
-				}
-				if canRecover {
-					debit := tx.Model(&User{}).Where("id = ? AND quota >= ?", t.UserId, s.CreditedQuota).Update("quota", gorm.Expr("quota - ?", s.CreditedQuota))
-					if debit.Error != nil {
-						return debit.Error
-					}
-					if debit.RowsAffected == 1 {
-						refundStatus = IdataRiverRefundRecovered
-						reclaimed = true
-					}
+				if recovered {
+					refundStatus = IdataRiverRefundRecovered
 				}
 			}
 			claim := tx.Model(&IdataRiverOrder{}).Where("trade_no = ? AND refund_status = ?", tradeNo, IdataRiverRefundNone).Updates(map[string]any{"refund_status": refundStatus, "refund_time": common.GetTimestamp(), "platform_status": "REFUND"})
@@ -301,26 +290,14 @@ func ReconcileIdataRiverOrder(ctx context.Context, tradeNo, platformID, status, 
 		}
 		return nil
 	})
-	if cacheReserved && (err != nil || !reclaimed) {
-		// Leave callback response time below five seconds even after its budget expires.
-		compCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 250*time.Millisecond)
-		defer cancel()
-		if restoreErr := common.RDB.Eval(compCtx, userQuotaDeltaScript, []string{getUserCacheKey(t.UserId)}, s.CreditedQuota, t.UserId, userCacheSchemaVersion).Err(); restoreErr != nil {
-			common.SysError(common.LogText("iDataRiver wallet cache compensation failed user_id=%d", t.UserId))
-		}
-	}
 	if err != nil {
 		return err
 	}
-	if common.RedisEnabled && (credited || (reclaimed && !cacheReserved)) {
-		delta := int64(s.Quota)
-		if reclaimed {
-			delta = -int64(s.CreditedQuota)
-		}
+	if common.RedisEnabled && (credited || refundRecorded) {
 		cacheCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 250*time.Millisecond)
 		defer cancel()
-		if cacheErr := common.RDB.Eval(cacheCtx, userQuotaDeltaScript, []string{getUserCacheKey(t.UserId)}, delta, t.UserId, userCacheSchemaVersion).Err(); cacheErr != nil {
-			common.SysError(common.LogText("iDataRiver wallet cache update failed user_id=%d", t.UserId))
+		if cacheErr := common.RDB.Del(cacheCtx, getUserCacheKey(t.UserId)).Err(); cacheErr != nil {
+			common.SysError(common.LogText("iDataRiver wallet display cache invalidation failed user_id=%d", t.UserId))
 		}
 	}
 	// ponytail: audit logs follow upstream best-effort delivery; use an outbox if cross-database crash-safe logs become required. The refund ledger above is transactional.

@@ -41,12 +41,12 @@ func TestIdataRiverRefundUsesLiveBalance(t *testing.T) {
 	reserved, err := TryReserveUserQuota(user.Id, 1)
 	require.NoError(t, err)
 	require.True(t, reserved)
-	assert.Equal(t, 100, getUserQuotaFromDB(t, user.Id), "SQL still has deferred consumption")
+	assert.Equal(t, 99, getUserQuotaFromDB(t, user.Id), "batch mode does not defer balances")
 	require.NoError(t, ReconcileIdataRiverOrder(t.Context(), trade, trade, "REFUND", ""))
 	_, s, err := GetIdataRiverOrder(t.Context(), trade, "", user.Id)
 	require.NoError(t, err)
 	assert.Equal(t, IdataRiverRefundManualRequired, s.RefundStatus)
-	assert.Equal(t, 100, getUserQuotaFromDB(t, user.Id), "insufficient live balance must not debit SQL")
+	assert.Equal(t, 99, getUserQuotaFromDB(t, user.Id), "insufficient primary DB balance must not be reclaimed")
 	cached, err = GetUserCache(user.Id)
 	require.NoError(t, err)
 	assert.Equal(t, 99, cached.Quota)
@@ -73,14 +73,14 @@ func TestIdataRiverRefundCacheCompensationAndMissingBalance(t *testing.T) {
 	assert.Equal(t, 100, getUserQuotaFromDB(t, user.Id))
 	cached, err := GetUserCache(user.Id)
 	require.NoError(t, err)
-	assert.Equal(t, 100, cached.Quota, "SQL rollback restores the cache reservation")
+	assert.Equal(t, 100, cached.Quota, "SQL rollback leaves display cache unchanged")
 	require.NoError(t, DB.Callback().Update().Remove(callback))
 	common.BatchUpdateEnabled = true
 	server.Del(getUserCacheKey(user.Id))
-	require.Error(t, ReconcileIdataRiverOrder(t.Context(), trade, trade, "REFUND", ""), "missing cache with deferred consumption remains retryable")
+	require.NoError(t, ReconcileIdataRiverOrder(t.Context(), trade, trade, "REFUND", ""), "missing display cache cannot block a primary DB refund")
 	_, s, err := GetIdataRiverOrder(t.Context(), trade, "", user.Id)
 	require.NoError(t, err)
-	assert.Equal(t, IdataRiverRefundNone, s.RefundStatus)
+	assert.Equal(t, IdataRiverRefundRecovered, s.RefundStatus)
 	_, err = GetUserCache(user.Id)
 	require.NoError(t, err)
 	require.NoError(t, ReconcileIdataRiverOrder(t.Context(), trade, trade, "REFUND", ""))
@@ -91,6 +91,56 @@ func TestIdataRiverRefundCacheCompensationAndMissingBalance(t *testing.T) {
 	require.NoError(t, ReconcileIdataRiverOrder(t.Context(), trade, trade, "REFUND", ""))
 	require.NoError(t, ReconcileIdataRiverOrder(t.Context(), trade, trade, "DONE", ""))
 	assert.Zero(t, getUserQuotaFromDB(t, user.Id))
+}
+
+func TestIdataRiverRefundIgnoresCacheAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		consume       int
+		cache         string
+		missing, down bool
+		want          string
+	}{
+		{name: "stale-low", cache: "0", want: IdataRiverRefundRecovered},
+		{name: "stale-high", consume: 70, cache: "100000", want: IdataRiverRefundManualRequired},
+		{name: "missing", missing: true, want: IdataRiverRefundRecovered},
+		{name: "unavailable", down: true, want: IdataRiverRefundRecovered},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			truncateTables(t)
+			resetBatchUpdateTestState(t)
+			server := useUserCacheMiniRedis(t)
+			user := createReserveTestUser(t, 0)
+			trade := idataRiverWalletOrder(t, user)
+			require.NoError(t, ReconcileIdataRiverOrder(t.Context(), trade, trade, "DONE", ""))
+			_, err := GetUserCache(user.Id)
+			require.NoError(t, err)
+			if test.consume > 0 {
+				reserved, err := TryReserveUserQuota(user.Id, test.consume)
+				require.NoError(t, err)
+				require.True(t, reserved)
+			}
+			if test.missing {
+				server.Del(getUserCacheKey(user.Id))
+			} else if test.down {
+				server.Close()
+			} else {
+				server.HSet(getUserCacheKey(user.Id), "Quota", test.cache)
+			}
+			common.BatchUpdateEnabled = true
+			for range 2 {
+				require.NoError(t, ReconcileIdataRiverOrder(t.Context(), trade, trade, "REFUND", ""))
+			}
+			_, order, err := GetIdataRiverOrder(t.Context(), trade, "", user.Id)
+			require.NoError(t, err)
+			require.Equal(t, test.want, order.RefundStatus)
+			wantQuota := 0
+			if test.want == IdataRiverRefundManualRequired {
+				wantQuota = 100 - test.consume
+			}
+			require.Equal(t, wantQuota, getUserQuotaFromDB(t, user.Id))
+		})
+	}
 }
 
 func TestIdataRiverRefundCompetesWithConsumption(t *testing.T) {

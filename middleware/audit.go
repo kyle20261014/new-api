@@ -2,7 +2,9 @@ package middleware
 
 import (
 	"bytes"
+	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -205,11 +207,12 @@ func auditResponseSuccess(status int, body []byte) bool {
 
 const accessTokenAuditContextKey = "access_token_request_audit"
 
-// TokenOperationAudit runs after UserAuth and before endpoint rate limits.
+// TokenOperationAudit runs before authentication and endpoint rate limits.
 // Handlers add only allowlisted metadata; neither bodies nor raw errors are persisted.
 func TokenOperationAudit() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var action, content string
+		authDenialOnly := false
 		switch c.Request.Method + " " + c.FullPath() {
 		case "POST /api/token/":
 			action, content = "token.create", "API token creation"
@@ -226,6 +229,9 @@ func TokenOperationAudit() gin.HandlerFunc {
 			action, content = "token.key_view", "API token key access"
 		case "POST /api/token/batch/keys":
 			action, content = "token.key_view_batch", "API token batch key access"
+		case "POST /api/mowan/smart-routing/submissions/:submission_id/reconcile":
+			action, content = "routing.submission_reconcile", "Routing submission reconciliation"
+			authDenialOnly = true // Authenticated admin/handler failures already have their audit boundary.
 		default:
 			c.Next()
 			return
@@ -237,15 +243,39 @@ func TokenOperationAudit() gin.HandlerFunc {
 		}
 		common.SetContextKey(c, constant.ContextKeyTokenAuditParams, params)
 		entry := model.AuditLog{
-			UserId: c.GetInt("id"), Username: c.GetString("username"), ActorRole: c.GetInt("role"),
 			Category: model.AuditCategorySecurity, Action: action, Content: content,
 			Other: model.AuditOther{Op: &model.AuditOperation{Action: action, Params: params}},
 		}
 		writer := &auditResponseWriter{ResponseWriter: c.Writer, body: bytes.NewBuffer(nil), maxSize: 64 * 1024}
 		c.Writer = writer
 		c.Next()
+		entry.UserId, entry.Username, entry.ActorRole = c.GetInt("id"), c.GetString("username"), c.GetInt("role")
+		if authDenialOnly && entry.UserId > 0 {
+			return
+		}
 		entry.Status = writer.Status()
 		entry.Success = auditResponseSuccess(entry.Status, writer.body.Bytes())
+		if entry.UserId == 0 && !entry.Success {
+			if _, alreadyAudited := c.Get(accessTokenAuditContextKey); alreadyAudited {
+				return // The PAT rejection already has identity, fingerprint and a safe failure reason.
+			}
+			params["failure_reason"] = http.StatusText(entry.Status)
+			raw, present := authorizationToken(c.GetHeader("Authorization"))
+			entry.AuthMethod = "anonymous"
+			if present {
+				entry.AuthMethod = "unknown"
+				entry.TokenRef = model.AccessTokenFingerprint(strings.TrimPrefix(raw, "sk-"))
+				if strings.HasPrefix(raw, "sk-") {
+					entry.AuthMethod = "api_key"
+				}
+				// Reuse credential validation solely for a safe audit identity; it grants no access.
+				user, _, kind, err := classifyDashboardCredential(c)
+				if err == nil && user != nil && kind == dashboardCredentialInternal {
+					entry.UserId, entry.Username, entry.ActorRole = user.Id, user.Username, user.Role
+					entry.AuthMethod = "session"
+				}
+			}
+		}
 		if writer.body.Len() == writer.maxSize {
 			// JSON may be truncated before its success field. A completed handler
 			// supplies the result without retaining an unbounded response body.

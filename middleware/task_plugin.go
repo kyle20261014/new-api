@@ -532,6 +532,8 @@ func RouteTaskPluginEndpoint() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		// Preserve the registry snapshot for per-channel protocol/health keys before ownership is selected.
+		c.Set("mowan_routing_task_endpoint", endpoint)
 
 		filter := dto.ChannelFilter{Kind: dto.FilterTaskPluginEndpoint}
 		for _, candidate := range endpoint.Candidates {
@@ -1341,6 +1343,18 @@ func applyOriginTaskIntent(c *gin.Context, intent map[string]any, meta pluginrun
 			return &originTaskIntentError{Code: "origin_task_channel_conflict", Message: "origin tasks must belong to the same channel", StatusCode: http.StatusBadRequest}
 		}
 		tasks = append(tasks, task)
+	}
+	if service.IsSmartRouting(c) {
+		group := ""
+		for _, task := range tasks {
+			if group != "" && group != task.Group {
+				return &originTaskIntentError{Code: "origin_task_group_conflict", Message: "origin tasks must belong to the same billing group", StatusCode: http.StatusBadRequest}
+			}
+			group = task.Group
+		}
+		if err := service.BindRoutingOrigin(c, c.GetString("original_model"), group, channelID); err != nil {
+			return &originTaskIntentError{Code: "origin_task_group_unavailable", Message: err.Error(), StatusCode: http.StatusForbidden}
+		}
 	}
 
 	channel, err := model.CacheGetChannel(channelID)

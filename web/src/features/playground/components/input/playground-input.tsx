@@ -41,12 +41,14 @@ interface PlaygroundInputProps {
   onSubmit: (text: string) => void
   onStop?: () => void
   disabled?: boolean
+  submitDisabled?: boolean
   isGenerating?: boolean
   models: ModelOption[]
   modelValue: string
   onModelChange: (value: string) => void
   isModelLoading?: boolean
   groups: GroupOption[]
+  hideGroup?: boolean
   groupValue: string
   onGroupChange: (value: string) => void
   hasMessages?: boolean
@@ -67,12 +69,14 @@ export function PlaygroundInput({
   onSubmit,
   onStop,
   disabled,
+  submitDisabled,
   isGenerating,
   models,
   modelValue,
   onModelChange,
   isModelLoading = false,
   groups,
+  hideGroup,
   groupValue,
   onGroupChange,
   hasMessages = false,
@@ -114,7 +118,9 @@ export function PlaygroundInput({
         <PromptInputFooter className='border-border/60 bg-muted/20 dark:bg-muted/10 border-t px-3 py-2.5 backdrop-blur'>
           <PlaygroundInputControls
             disabled={disabled}
+            submitDisabled={submitDisabled}
             groups={groups}
+            hideGroup={hideGroup}
             groupValue={groupValue}
             isGenerating={isGenerating}
             isModelLoading={isModelLoading}

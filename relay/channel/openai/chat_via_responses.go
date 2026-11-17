@@ -20,6 +20,30 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func observeOpenAIProviderError(c *gin.Context, providerError types.OpenAIError) {
+	status := http.StatusInternalServerError
+	switch providerError.Type {
+	case "invalid_request_error", "authentication_error", "permission_error", "billing_error", "insufficient_quota", "parse_error", "validation_error":
+		status = http.StatusBadRequest
+	case "rate_limit_error", "rate_limit_exceeded":
+		status = http.StatusTooManyRequests
+	}
+	code, _ := providerError.Code.(string)
+	switch code {
+	case "insufficient_quota", "billing_hard_limit_reached", "invalid_api_key", "invalid_request_error", "invalid_prompt", "context_length_exceeded", "model_not_found", "permission_denied", "content_policy_violation", "content_filter":
+		status = http.StatusBadRequest
+	case "rate_limit_error", "rate_limit_exceeded":
+		if status != http.StatusBadRequest {
+			status = http.StatusTooManyRequests
+		}
+	}
+	observation := types.WithOpenAIError(providerError, status)
+	if status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
+		service.MarkRoutingUpstreamResponse(observation)
+	}
+	service.FinishRoutingSend(c, observation, false, 0)
+}
+
 func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -109,10 +133,11 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 			if streamResp.Response != nil {
 				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
 					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+					observeOpenAIProviderError(c, *oaiErr)
 					break
 				}
 			}
-			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			streamErr = service.MarkRoutingUpstreamResponse(types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError))
 		}
 		if streamErr != nil || finalResponse != nil {
 			break
@@ -285,11 +310,12 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 				failedUsage = streamResp.Response.Usage
 				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
 					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+					observeOpenAIProviderError(c, *oaiErr)
 					stopStream(sr, streamErr)
 					return
 				}
 			}
-			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			streamErr = service.MarkRoutingUpstreamResponse(types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError))
 			stopStream(sr, streamErr)
 			return
 		}
@@ -339,6 +365,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			}
 		}
 		logger.LogError(c, common.LogText("responses stream failed after output was delivered, billing the delivered output: %s", streamErr.Error()))
+		service.FinishRoutingSend(c, streamErr, false, 0)
 		streamErr.SetMessage(common.MessageWithRequestId(streamErr.Error(), c.GetString(common.RequestIdKey)))
 		if info.RelayFormat == types.RelayFormatClaude {
 			c.JSON(streamErr.StatusCode, gin.H{"type": "error", "error": streamErr.ToClaudeError(common.UpstreamAddresses(c)...)})

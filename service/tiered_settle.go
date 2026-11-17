@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
@@ -203,7 +204,48 @@ func refreshTieredBillingGroup(relayInfo *relaycommon.RelayInfo) (*billingexpr.B
 // state before an upstream attempt. An existing session reserves any higher
 // estimate before sending. If the initial group was free and skipped
 // pre-consume, switching to a paid group creates the session at that point.
-func PrepareTieredBillingForSelectedGroup(c *gin.Context, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+func PrepareTieredBillingForSelectedGroup(c *gin.Context, relayInfo *relaycommon.RelayInfo, reprice ...func() error) *types.NewAPIError {
+	if IsSmartRouting(c) {
+		if relayInfo == nil {
+			return types.NewError(errors.New("routing billing info unavailable"), types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+		}
+		target := 0
+		var quoteErr error
+		if snap := relayInfo.TieredBillingSnapshot; snap != nil && snap.BillingMode == "tiered_expr" {
+			// The request expression and estimated quantities stay frozen; only the
+			// selected group's final effective ratio changes between attempts.
+			snap, err := refreshTieredBillingGroup(relayInfo)
+			quoteErr = err
+			if snap != nil {
+				target = snap.EstimatedQuotaAfterGroup
+				relayInfo.PriceData.QuotaToPreConsume = target
+			}
+		} else if len(reprice) == 0 || reprice[0] == nil {
+			quoteErr = errors.New("routing final price preparation unavailable")
+		} else {
+			quoteErr = reprice[0]()
+			target = relayInfo.PriceData.QuotaToPreConsume
+		}
+		if quoteErr != nil {
+			return types.NewErrorWithStatusCode(quoteErr, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if target < 0 || target > common.MaxQuota {
+			return types.NewErrorWithStatusCode(errors.New("routing final quote out of range"), types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if target > 0 {
+			relayInfo.PriceData.FreeModel = false
+		}
+		if relayInfo.Billing == nil {
+			if err := PreConsumeBilling(c, 0, relayInfo); err != nil {
+				return err
+			}
+		}
+		if err := relayInfo.Billing.ReserveBeforeSubmit(target); err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		relayInfo.FinalPreConsumedQuota = relayInfo.Billing.GetPreConsumedQuota()
+		return nil
+	}
 	snap, err := refreshTieredBillingGroup(relayInfo)
 	if err != nil {
 		return types.NewErrorWithStatusCode(

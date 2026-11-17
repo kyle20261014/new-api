@@ -16,6 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import {
+  defaultRouting,
+  routingIsValid,
+} from '@/features/mowan/smart-routing/policy'
+import { RoutingControl } from '@/features/mowan/smart-routing/routing-control'
+import type { RoutingPolicy } from '@/features/mowan/smart-routing/types'
+
 import { PlaygroundChat } from './components/chat/playground-chat'
 import { PlaygroundInput } from './components/input/playground-input'
 import {
@@ -24,8 +34,11 @@ import {
   usePlaygroundOptions,
   usePlaygroundState,
 } from './hooks'
+import { buildChatCompletionPayload } from './lib'
 
-export function Playground() {
+export function Playground(props: { initialModel?: string } = {}) {
+  const { t } = useTranslation()
+  const [routing, setRouting] = useState<RoutingPolicy>(defaultRouting)
   const {
     config,
     parameterEnabled,
@@ -39,12 +52,13 @@ export function Playground() {
     updateConfig,
     updateParameterEnabled,
     clearMessages,
-  } = usePlaygroundState()
+  } = usePlaygroundState(props.initialModel)
 
   const { sendChat, stopGeneration, isGenerating } = useChatHandler({
     config,
     parameterEnabled,
     onMessageUpdate: updateMessages,
+    routing,
   })
 
   const {
@@ -68,11 +82,22 @@ export function Playground() {
 
   const { isLoadingModels } = usePlaygroundOptions({
     currentGroup: config.group,
+    routingGroup: routing.mode === 'fixed' ? routing.fixed_group : '',
+    preserveUnavailableModel:
+      !!props.initialModel && config.model === props.initialModel,
     currentModel: config.model,
     setGroups,
     setModels,
     updateConfig,
   })
+  const eligibleModels = models.filter((model) => {
+    if (routing.mode === 'fixed') return true
+    if (routing.strategy === 'custom') return !!routing.models[model.value]
+    return !routing.excluded_models?.includes(model.value)
+  })
+  const routingUnavailable =
+    !routingIsValid(routing) ||
+    !eligibleModels.some((model) => model.value === config.model)
 
   return (
     <div className='relative flex size-full min-h-0 flex-col overflow-hidden'>
@@ -95,22 +120,53 @@ export function Playground() {
 
       {/* Input area: center content and constrain to the same container width */}
       <div className='mx-auto w-full max-w-4xl'>
+        <details className='bg-background max-h-[50dvh] overflow-auto border-t px-4 py-2'>
+          <summary className='min-h-11 cursor-pointer text-sm font-medium'>
+            {t('Temporary routing for this experience')}
+          </summary>
+          <p className='text-muted-foreground mb-3 text-xs'>
+            {t(
+              'Applies only to these requests. No saved key is changed. Actual account billing still applies.'
+            )}
+          </p>
+          <RoutingControl
+            value={routing}
+            onChange={setRouting}
+            groups={groups.map((group) => group.value)}
+            model={config.model}
+            disabled={isGenerating}
+            previewRequest={{
+              ...buildChatCompletionPayload(messages, config, parameterEnabled),
+            }}
+          />
+        </details>
+        {routingUnavailable && !isLoadingModels && (
+          <p role='status' className='text-muted-foreground px-4 py-2 text-sm'>
+            {t(
+              'Select at least one model and group, and fix invalid routing selections.'
+            )}
+          </p>
+        )}
         <PlaygroundInput
           config={config}
           disabled={isGenerating}
+          submitDisabled={routingUnavailable}
           groups={groups}
+          hideGroup
           groupValue={config.group}
           isGenerating={isGenerating}
           isModelLoading={isLoadingModels}
           modelValue={config.model}
-          models={models}
+          models={eligibleModels}
           onGroupChange={(value) => updateConfig('group', value)}
           onConfigChange={updateConfig}
           onClearMessages={handleClearMessages}
           onModelChange={(value) => updateConfig('model', value)}
           onParameterEnabledChange={updateParameterEnabled}
           onStop={stopGeneration}
-          onSubmit={handleSendMessage}
+          onSubmit={(text) => {
+            if (!routingUnavailable) handleSendMessage(text)
+          }}
           parameterEnabled={parameterEnabled}
           hasMessages={messages.length > 0}
         />

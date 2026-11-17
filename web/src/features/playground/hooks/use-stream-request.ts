@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { SSE } from 'sse.js'
 
+import type { SubmissionReference } from '@/features/mowan/smart-routing/submission-reference'
 import { getFreshAuthHeaders } from '@/lib/api'
 
 import { API_ENDPOINTS, ERROR_MESSAGES } from '../constants'
@@ -44,7 +45,11 @@ interface StreamEventSource {
 interface StreamRequestCallbacks {
   onUpdate: (type: 'reasoning' | 'content', chunk: string) => void
   onComplete: () => void
-  onError: (error: string, errorCode?: string) => void
+  onError: (
+    error: string,
+    errorCode?: string,
+    submission?: SubmissionReference
+  ) => void
 }
 
 interface StreamRequestControllerRuntime {
@@ -103,10 +108,14 @@ export function createStreamRequestController(
     const isCurrent = () =>
       generation === requestGeneration && source === nextSource
 
-    const handleError = (errorMessage: string, errorCode?: string) => {
+    const handleError = (
+      errorMessage: string,
+      errorCode?: string,
+      submission?: SubmissionReference
+    ) => {
       if (!isCurrent() || completed) return
       completed = true
-      callbacks.onError(errorMessage, errorCode)
+      callbacks.onError(errorMessage, errorCode, submission)
       closeActiveSource(nextSource)
     }
 
@@ -138,8 +147,10 @@ export function createStreamRequestController(
       if (!isStreamClosedReadyState(nextSource.readyState)) {
         // eslint-disable-next-line no-console
         console.error('SSE Error:', event)
-        const { errorCode, errorMessage } = parseStreamErrorDetails(event.data)
-        handleError(errorMessage, errorCode)
+        const { errorCode, errorMessage, submission } = parseStreamErrorDetails(
+          event.data
+        )
+        handleError(errorMessage, errorCode, submission)
       }
     })
 
@@ -206,7 +217,11 @@ export function useStreamRequest() {
       payload: ChatCompletionRequest,
       onUpdate: (type: 'reasoning' | 'content', chunk: string) => void,
       onComplete: () => void,
-      onError: (error: string, errorCode?: string) => void
+      onError: (
+        error: string,
+        errorCode?: string,
+        submission?: SubmissionReference
+      ) => void
     ) =>
       controllerRef.current?.send(payload, {
         onUpdate,

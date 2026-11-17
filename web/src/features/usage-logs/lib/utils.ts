@@ -271,7 +271,10 @@ export async function fetchLogsByCategory(
       ? { mj_id: searchParams.filter as string | undefined }
       : {}),
     ...(logCategory === 'task'
-      ? { task_id: searchParams.filter as string | undefined }
+      ? {
+          task_id: searchParams.filter as string | undefined,
+          submission_id: searchParams.submissionId as string | undefined,
+        }
       : {}),
   }
 

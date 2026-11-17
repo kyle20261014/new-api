@@ -62,13 +62,23 @@ describe('API key Auto group form mapping', () => {
     expect(apiKeySchema.parse(legacyApiKey).auto_groups).toBe(null)
   })
 
-  test('creates an Auto token that inherits the global order', () => {
+  test('creates a smart balanced token without legacy routing fields', () => {
     const defaults = getApiKeyFormDefaultValues(true)
 
     expect(defaults.group).toBe('auto')
     expect(defaults.auto_groups_mode).toBe('inherit')
     expect(defaults.auto_groups).toEqual([])
-    expect(transformFormDataToPayload(defaults).auto_groups).toEqual([])
+    expect(transformFormDataToPayload(defaults).routing).toEqual({
+      schema_version: 1,
+      mode: 'smart',
+      strategy: 'balanced',
+      excluded_models: [],
+      excluded_groups: [],
+      excluded_model_groups: {},
+    })
+    expect(transformFormDataToPayload(defaults)).not.toHaveProperty(
+      'auto_groups'
+    )
   })
 
   test('maps omitted, null, and empty snapshots to inheritance on edit', () => {
@@ -92,7 +102,7 @@ describe('API key Auto group form mapping', () => {
     }
   })
 
-  test('filters a stored snapshot before applying a lowered limit', () => {
+  test('preserves revoked groups and over-limit snapshots on read', () => {
     const defaults = transformApiKeyToFormDefaults(
       {
         ...baseApiKey,
@@ -103,10 +113,10 @@ describe('API key Auto group form mapping', () => {
     )
 
     expect(defaults.auto_groups_mode).toBe('custom')
-    expect(defaults.auto_groups).toEqual(['vip', 'default'])
+    expect(defaults.auto_groups).toEqual(['revoked', 'vip', 'default'])
   })
 
-  test('keeps a fully filtered snapshot custom and rejects it until resolved', () => {
+  test('preserves a revoked snapshot and allows unrelated edits', () => {
     const defaults = transformApiKeyToFormDefaults(
       { ...baseApiKey, auto_groups: ['revoked'] },
       ['default'],
@@ -114,20 +124,21 @@ describe('API key Auto group form mapping', () => {
     )
 
     expect(defaults.auto_groups_mode).toBe('custom')
-    expect(defaults.auto_groups).toEqual([])
+    expect(defaults.auto_groups).toEqual(['revoked'])
 
-    const result = getApiKeyFormSchema(t, 2).safeParse(defaults)
-    expect(result.success).toBe(false)
-    if (result.success) return
-    expect(result.error.issues[0]?.path).toEqual(['auto_groups'])
-    expect(result.error.issues[0]?.message).toBe(
-      'Select at least one Auto group or restore global Auto.'
+    const original = { ...baseApiKey, auto_groups: ['revoked'] }
+    expect(
+      getApiKeyFormSchema(t, 2, original).safeParse(defaults).success
+    ).toBe(true)
+    expect(transformFormDataToPayload(defaults, original)).not.toHaveProperty(
+      'auto_groups'
     )
   })
 
   test('submits a valid custom snapshot in its configured order', () => {
     const custom = {
       ...getApiKeyFormDefaultValues(true),
+      routing: null,
       auto_groups_mode: 'custom' as const,
       auto_groups: ['vip', 'default'],
     }
@@ -139,7 +150,7 @@ describe('API key Auto group form mapping', () => {
   })
 
   test('submits an empty array for inheritance and for non-Auto groups', () => {
-    const inherited = getApiKeyFormDefaultValues(true)
+    const inherited = { ...getApiKeyFormDefaultValues(true), routing: null }
     expect(transformFormDataToPayload(inherited).auto_groups).toEqual([])
 
     const nonAuto = {
@@ -155,6 +166,7 @@ describe('API key Auto group form mapping', () => {
   test('rejects snapshots over the configured limit', () => {
     const result = getApiKeyFormSchema(t, 1).safeParse({
       ...getApiKeyFormDefaultValues(true),
+      routing: null,
       name: 'limited token',
       auto_groups_mode: 'custom',
       auto_groups: ['default', 'vip'],
@@ -169,6 +181,7 @@ describe('API key Auto group form mapping', () => {
   test('rejects duplicate custom groups', () => {
     const result = getApiKeyFormSchema(t).safeParse({
       ...getApiKeyFormDefaultValues(true),
+      routing: null,
       name: 'duplicate token',
       auto_groups_mode: 'custom',
       auto_groups: ['vip', 'vip'],

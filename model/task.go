@@ -129,6 +129,8 @@ type TaskPrivateData struct {
 	// PluginState is plugin-owned cross-round data. Unlike Task.Data it is
 	// only replaced when a hook explicitly returns state.
 	PluginState json.RawMessage `json:"plugin_state,omitempty"`
+	// RoutingTerminal is written only alongside a real upstream terminal CAS.
+	RoutingTerminal *RoutingTaskTerminalReceipt `json:"routing_terminal,omitempty"`
 	// PollFailures counts consecutive unrecognized or transient poll outcomes.
 	PollFailures int `json:"poll_failures,omitempty"`
 	// ResultDiscarded marks an immediate terminal result whose submit route
@@ -213,7 +215,7 @@ func (p TaskPrivateData) Value() (driver.Value, error) {
 	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" &&
 		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
 		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
-		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 &&
+		!p.ResponsesBackground && len(p.PluginState) == 0 && p.RoutingTerminal == nil && p.PollFailures == 0 &&
 		!p.ResultDiscarded {
 		return nil, nil
 	}
@@ -365,9 +367,11 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 
 func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	var tasks []*Task
+	submissions := routingTaskSubmissionReferences(DB, "Task")
 	err := DB.Where("progress != ?", "100%").
 		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
 		Where("submit_time < ?", cutoffUnix).
+		Where("NOT EXISTS (?)", submissions).
 		Order("submit_time").
 		Limit(limit).
 		Find(&tasks).Error
@@ -380,8 +384,8 @@ func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
-	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
+	// Journaled tasks remain pollable until their provider status is terminal.
+	err = DB.Where("progress != ? OR EXISTS (?)", "100%", routingTaskSubmissionReferences(DB, "Task")).Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -395,7 +399,7 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 func HasUnfinishedSyncTasks() bool {
 	var id int64
 	err := DB.Model(&Task{}).
-		Where("progress != ?", "100%").
+		Where("progress != ? OR EXISTS (?)", "100%", routingTaskSubmissionReferences(DB, "Task")).
 		Where("status != ?", TaskStatusFailure).
 		Where("status != ?", TaskStatusSuccess).
 		Limit(1).
@@ -555,11 +559,7 @@ func (t *Task) UpdateQuota() error {
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	return t.updateRoutingStatus(context.Background(), fromStatus, false, false)
 }
 
 // TaskBulkUpdateByID performs an unconditional bulk UPDATE by primary key IDs.

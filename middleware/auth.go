@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/mowan/smartrouting"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -586,6 +587,31 @@ func TokenAuth() func(c *gin.Context) {
 					common.TranslateMessage(c, i18n.MsgTokenInvalid))
 			}
 			return
+		}
+		routing, err := model.GetTokenRouting(model.DB.WithContext(c.Request.Context()), token.Id)
+		if err != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, common.TranslateMessage(c, i18n.MsgDatabaseError))
+			return
+		}
+		c.Set(smartrouting.ContextKey, routing)
+		if routing != nil && routing.Mode != "legacy" {
+			// Legacy columns are only the recovery snapshot for a new saved mode.
+			// Do not let an old cached group deny a newly authorized routing policy.
+			current, readErr := model.GetTokenById(token.Id)
+			if readErr != nil || current.UserId != token.UserId {
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, common.TranslateMessage(c, i18n.MsgDatabaseError))
+				return
+			}
+			if current.Status != common.TokenStatusEnabled || (current.ExpiredTime != -1 && current.ExpiredTime < common.GetTimestamp()) || (!current.UnlimitedQuota && current.RemainQuota <= 0) {
+				abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
+				return
+			}
+			token = current
+			token.Group, token.AutoGroups, token.CrossGroupRetry = "", "", false
+			if routing.Mode == "fixed" {
+				policy, _ := smartrouting.ParsePolicy([]byte(routing.PolicyJSON))
+				token.Group = *policy.FixedGroup
+			}
 		}
 
 		allowIps := token.GetIpLimits()

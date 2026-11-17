@@ -634,6 +634,9 @@ func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *r
 	defer func() {
 		switch {
 		case taskErr == nil:
+		case service.IsSmartRouting(c):
+			taskErr.NoRetry = true
+			taskErr.Message = service.RoutingSubmissionUnknown(c, errors.New(taskErr.Message)).Error()
 		case relayed:
 			// The client already holds the vendor's events, so the task
 			// completes at the reserved quota instead of failing and refunding

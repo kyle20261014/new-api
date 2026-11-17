@@ -18,6 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import {
+  routingSchema,
+  type RoutingPolicy,
+} from '@/features/mowan/smart-routing/types'
+
 // ============================================================================
 // API Key Schema & Types
 // ============================================================================
@@ -47,6 +52,9 @@ export const apiKeySchema = z.object({
   model_limits: z.string().nullish().default(''),
   allow_ips: z.string().nullish().default(''),
   allow_user_quota_query: z.boolean().optional().default(false),
+  routing: routingSchema.nullable().optional(),
+  routing_version: z.number().int().nonnegative().optional(),
+  allow_routing_self_write: z.boolean().optional(),
 })
 
 export type ApiKey = z.infer<typeof apiKeySchema>
@@ -86,16 +94,19 @@ export interface SearchApiKeysParams {
 
 export interface ApiKeyFormData {
   name: string
-  remain_quota: number
-  expired_time: number
-  unlimited_quota: boolean
-  model_limits_enabled: boolean
-  model_limits: string
-  allow_ips: string
-  allow_user_quota_query: boolean
-  group: string
-  auto_groups: string[]
-  cross_group_retry: boolean
+  remain_quota?: number
+  expired_time?: number
+  unlimited_quota?: boolean
+  model_limits_enabled?: boolean
+  model_limits?: string
+  allow_ips?: string
+  allow_user_quota_query?: boolean
+  group?: string
+  auto_groups?: string[] | null
+  cross_group_retry?: boolean
+  routing?: RoutingPolicy
+  expected_routing_version?: number
+  allow_routing_self_write?: boolean
 }
 
 export interface TokenAutoGroupsConfig {

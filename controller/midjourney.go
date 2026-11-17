@@ -157,11 +157,22 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 				continue
 			}
 
+			realTerminal := responseItem.Status == "SUCCESS" || responseItem.Status == "FAILURE"
 			useTime := (time.Now().UnixNano() / int64(time.Millisecond)) - task.SubmitTime
-			// 如果时间超过一小时，且进度不是100%，则认为任务失败
-			if useTime > 3600000 && task.Progress != "100%" {
-				responseItem.FailReason = "Upstream task timed out (over 1 hour)"
-				responseItem.Status = "FAILURE"
+			timedOut := !realTerminal && useTime > 3600000 && task.Progress != "100%"
+			journaled := false
+			// Only legacy tasks use the local cutoff; durable submissions keep polling for upstream proof.
+			if timedOut || responseItem.FailReason != "" || responseItem.Status == "FAILURE" {
+				var submissions int64
+				if err := model.DB.WithContext(ctx).Model(&model.RoutingSubmission{}).Where("local_task_id = ? AND local_task_kind = ? AND user_id = ?", task.Id, "midjourney", task.UserId).Count(&submissions).Error; err != nil {
+					logger.LogError(ctx, common.LogText("Midjourney submission lookup failed, task %s: %v", task.MjId, err))
+					continue
+				}
+				journaled = submissions > 0
+				if timedOut && !journaled {
+					responseItem.FailReason = "Upstream task timed out (over 1 hour)"
+					responseItem.Status = "FAILURE"
+				}
 			}
 			if !checkMjTaskNeedUpdate(task, responseItem) {
 				continue
@@ -202,18 +213,27 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			}
 
 			shouldReturnQuota := false
-			if (task.Progress != "100%" && responseItem.FailReason != "") || (task.Progress == "100%" && task.Status == "FAILURE") {
+			if (journaled && realTerminal && task.Status == "FAILURE") || (!journaled && ((task.Progress != "100%" && responseItem.FailReason != "") || (task.Progress == "100%" && task.Status == "FAILURE"))) {
 				logger.LogInfo(ctx, common.LogText("%s failed: %s", task.MjId, task.FailReason))
 				task.Progress = "100%"
 				if task.Quota != 0 {
 					shouldReturnQuota = true
 				}
 			}
-			won, err := task.UpdateWithStatus(preStatus)
+			var won bool
+			if realTerminal {
+				won, err = task.UpdateWithUpstreamStatus(ctx, preStatus)
+			} else {
+				won, err = task.UpdateWithStatus(preStatus)
+			}
 			if err != nil {
 				logger.LogError(ctx, common.LogText("UpdateMidjourneyTask task error: %s", err.Error()))
 			} else if won && shouldReturnQuota {
 				service.RefundMidjourneyQuota(ctx, task, "Composition failed")
+			} else if won && task.Status == "SUCCESS" {
+				if _, err := model.FinalizeMidjourneyFundingContext(ctx, task, false); err != nil {
+					logger.LogError(ctx, common.LogText("Midjourney terminal funding pending, task %s: %s", task.MjId, err.Error()))
+				}
 			}
 		}
 	}

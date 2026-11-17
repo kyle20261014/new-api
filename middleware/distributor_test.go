@@ -29,6 +29,17 @@ func TestChannelMatchesExpectedTaskPluginUsesGenericChannelSetting(t *testing.T)
 	assert.False(t, channelMatchesExpectedTaskPlugin(nil, channel, ""))
 }
 
+func TestRelayJSONRejectsPlaygroundRoutingOverrides(t *testing.T) {
+	for _, payload := range []string{`{"model":"m","mowan_routing":null}`, `{"model":"m","mowan_routing":{"mode":"smart"}}`, `{"mowan_routing":null,"model":"m","mowan_routing":{}}`} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(payload))
+		c.Request.Header.Set("Content-Type", "application/json")
+		_, err := getModelFromJSONBody(c)
+		require.ErrorContains(t, err, "only supported by the playground")
+		common.CleanupBodyStorage(c)
+	}
+}
+
 func TestChannelMatchesExpectedTaskPluginUsesPinnedLegacyIndex(t *testing.T) {
 	registry := jsplugin.NewRegistry()
 	alpha, err := registry.Register(distributorTaskPluginSource("legacy-alpha", constant.ChannelTypeKling), jsplugin.Options{})

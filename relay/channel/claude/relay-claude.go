@@ -86,6 +86,21 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	return relayconvert.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
 
+func observeClaudeProviderError(c *gin.Context, providerError types.ClaudeError) {
+	status := http.StatusBadRequest
+	switch providerError.Type {
+	case "api_error", "server_error", "overloaded_error":
+		status = http.StatusInternalServerError
+	case "rate_limit_error":
+		status = http.StatusTooManyRequests
+	}
+	observation := types.WithClaudeError(providerError, status)
+	if status >= 500 || status == http.StatusTooManyRequests {
+		service.MarkRoutingUpstreamResponse(observation)
+	}
+	service.FinishRoutingSend(c, observation, false, 0)
+}
+
 func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, data string) *types.NewAPIError {
 	var claudeResponse dto.ClaudeResponse
 	err := common.UnmarshalJsonStr(data, &claudeResponse)
@@ -94,6 +109,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
+		observeClaudeProviderError(c, *claudeError)
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
 	if claudeResponse.Type == "message_start" && claudeResponse.Message != nil {
@@ -362,6 +378,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
+		observeClaudeProviderError(c, *claudeError)
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
 	info.ObserveResponseModel(claudeResponse.Model)

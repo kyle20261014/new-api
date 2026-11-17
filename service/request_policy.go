@@ -171,6 +171,15 @@ func RecordRequestPolicyTermination(c *gin.Context, apiErr *types.NewAPIError) {
 		return
 	}
 	state := RequestPolicy(c)
+	state.OutcomeRecorded, state.Successful = true, false
+	// A submitted stream cannot change its HTTP 200, but a final error must
+	// still release both request and final-group successful-request slots.
+	stream, _ := common.GetContextKeyType[*relaycommon.StreamStatus](c, constant.ContextKeyResponseStreamStatus)
+	if stream == nil {
+		stream = relaycommon.NewStreamStatus()
+		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, stream)
+	}
+	stream.MarkFailed(string(apiErr.GetErrorCode()), "", apiErr.StatusCode)
 	if state.FinalLogged {
 		return
 	}

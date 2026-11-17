@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -61,6 +62,20 @@ func newAwsInvokeError(requestContext context.Context, err error, operation stri
 	)
 }
 
+type routingAwsHTTPClient struct {
+	context *gin.Context
+	client  *http.Client
+}
+
+func (client routingAwsHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	common.SetContextKey(client.context, constant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
+	if err := service.BeginRoutingTransportSend(client.context); err != nil {
+		return nil, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	_ = service.StartRoutingAttempt(client.context, service.RoutingProtocolClass(client.context))
+	return client.client.Do(req)
+}
+
 func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.Client, error) {
 	httpClient, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
@@ -68,30 +83,26 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 	}
 
 	awsSecret := strings.Split(info.ApiKey, "|")
-	var client *bedrockruntime.Client
+	options := bedrockruntime.Options{HTTPClient: httpClient}
 	switch len(awsSecret) {
 	case 2:
-		apiKey := awsSecret[0]
-		region := awsSecret[1]
-		client = bedrockruntime.New(bedrockruntime.Options{
-			Region:                  region,
-			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
-			HTTPClient:              httpClient,
-		})
+		options.Region = awsSecret[1]
+		options.BearerAuthTokenProvider = bearer.StaticTokenProvider{Token: bearer.Token{Value: awsSecret[0]}}
 	case 3:
-		ak := awsSecret[0]
-		sk := awsSecret[1]
-		region := awsSecret[2]
-		client = bedrockruntime.New(bedrockruntime.Options{
-			Region:      region,
-			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
-			HTTPClient:  httpClient,
-		})
+		options.Region = awsSecret[2]
+		options.Credentials = aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(awsSecret[0], awsSecret[1], ""))
 	default:
 		return nil, errors.New("invalid aws secret key")
 	}
-
-	return client, nil
+	if service.IsSmartRouting(c) {
+		// Gate only after SDK validation/serialization/signing, just before send.
+		// A smart attempt must not hide SDK retries or HTTP redirect submissions.
+		relayClient := *httpClient
+		relayClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		options.HTTPClient = routingAwsHTTPClient{context: c, client: &relayClient}
+		options.RetryMaxAttempts = 1
+	}
+	return bedrockruntime.New(options), nil
 }
 
 func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor, requestBody io.Reader) (any, error) {
@@ -300,6 +311,7 @@ streamLoop:
 			switch v := event.(type) {
 			case *bedrockruntimeTypes.ResponseStreamMemberChunk:
 				info.SetFirstResponseTime()
+				service.ObserveRoutingStreamData(c, string(v.Value.Bytes))
 				respErr := claude.HandleStreamResponseData(c, info, claudeInfo, string(v.Value.Bytes))
 				if respErr != nil {
 					return respErr, nil

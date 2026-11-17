@@ -48,6 +48,7 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { RoutingExperience } from '@/features/mowan/smart-routing/routing-experience'
 import { getPerfMetrics } from '@/features/performance-metrics/api'
 import {
   formatLatency,
@@ -1489,6 +1490,10 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
   return (
     <div className='@container/details space-y-4'>
       <ModelHeader model={props.model} />
+      <RoutingExperience
+        model={props.model.model_name}
+        canChat={props.model.supported_endpoint_types?.includes('openai')}
+      />
 
       <Tabs defaultValue='overview' className='gap-4'>
         <TabsList className='bg-muted/60 grid w-full grid-cols-3 gap-1 rounded-lg p-1 group-data-horizontal/tabs:h-auto'>

@@ -1,3 +1,6 @@
+import { normalizeRouting } from '@/features/mowan/smart-routing/policy'
+import type { RoutingPolicy } from '@/features/mowan/smart-routing/types'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -30,7 +33,8 @@ import { formatMessageForAPI, isValidMessage } from '../message/message-utils'
 export function buildChatCompletionPayload(
   messages: Message[],
   config: PlaygroundConfig,
-  parameterEnabled: ParameterEnabled
+  parameterEnabled: ParameterEnabled,
+  routing?: RoutingPolicy
 ): ChatCompletionRequest {
   // Filter and format valid messages
   const processedMessages = messages
@@ -42,6 +46,10 @@ export function buildChatCompletionPayload(
     group: config.group,
     messages: processedMessages,
     stream: config.stream,
+  }
+  if (routing) {
+    payload.mowan_routing = normalizeRouting(routing)
+    delete payload.group
   }
 
   if (parameterEnabled.temperature) {

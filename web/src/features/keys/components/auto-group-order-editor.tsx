@@ -224,7 +224,13 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
               count={props.value.length}
               onMove={handleMove}
               onRemove={handleRemove}
-            />
+            >
+              {!props.options.some((option) => option.value === group) && (
+                <span className='text-destructive text-xs'>
+                  {t('Unavailable')}
+                </span>
+              )}
+            </AutoGroupOrderItem>
           ))}
         </Reorder.Group>
       )}

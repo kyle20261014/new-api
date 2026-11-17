@@ -64,6 +64,14 @@ type responsesWSErrorEvent struct {
 	Error      *types.OpenAIError `json:"error"`
 }
 
+func responsesWSUpstreamRejection(rejection responsesWSErrorEvent) *types.NewAPIError {
+	rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
+	if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
+		rejected.StatusCode = http.StatusBadRequest
+	}
+	return service.MarkRoutingUpstreamResponse(rejected)
+}
+
 type responsesWSMessage struct {
 	kind int
 	body []byte
@@ -239,6 +247,8 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 }
 
 func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState, create responsesWSCreateRequest) (apiErr *types.NewAPIError) {
+	c.Set("mowan_responses_ws", true)
+	defer service.ReleaseRoutingUnusedProbes(c)
 	policy := service.RequestPolicy(c)
 	modelName := create.Request.Model
 	started := time.Now()
@@ -259,6 +269,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if info != nil && billingPrepared {
 			apiErr = RefundFailedRequestBilling(c, info, apiErr)
 		}
+		service.FinishRoutingSend(c, apiErr, service.RequestPolicy(c).Successful, 0)
 	}()
 	if modelName == "" {
 		return newResponsesWSInvalidRequestError(errors.New("model is required"))
@@ -277,6 +288,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if apiErr = s.restoreConnectionContext(c, modelName); apiErr != nil {
 			return apiErr
 		}
+		if err := service.AuthorizeRoutingConnection(c, modelName, s.lockedGroup, s.lockedChannelID); err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
 		info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 		info.IsStream = true
 		common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
@@ -289,13 +303,21 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if apiErr != nil {
 			return apiErr
 		}
+		if err := service.ValidateRoutingConnection(c, modelName, s.lockedGroup, s.lockedChannelID); err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		_ = service.StartRoutingAttempt(c, "responses_ws")
 		if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 			state.closeCode = websocket.CloseInternalServerErr
 			return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 		}
 	} else {
 		retry := &service.RetryParam{Ctx: c, TokenGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), ModelName: modelName, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0)}
-		for ; retry.GetRetry() <= common.RetryTimes; retry.IncreaseRetry() {
+		retryLimit := common.RetryTimes
+		if service.IsSmartRouting(c) {
+			retryLimit = max(0, retryLimit)
+		}
+		for ; retry.GetRetry() <= retryLimit; retry.IncreaseRetry() {
 			var channel *appmodel.Channel
 			channel, apiErr = selectResponsesWSChannel(c, modelName, retry)
 			if apiErr != nil {
@@ -311,8 +333,19 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				}
 				billingPrepared = true
 			} else {
+				info.UsingGroup = common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup)
+				info.UserGroup = common.GetContextKeyString(c, appconstant.ContextKeyUserGroup)
 				info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
-				if apiErr = service.PrepareTieredBillingForSelectedGroup(c, info); apiErr != nil {
+				if apiErr = service.PrepareTieredBillingForSelectedGroup(c, info, func() error {
+					var meta *types.TokenCountMeta
+					if saved, ok := c.Get("mowan_routing_billing_meta"); ok {
+						meta, _ = saved.(*types.TokenCountMeta)
+					} else if info.Request != nil {
+						meta = info.Request.GetTokenCountMeta()
+					}
+					_, err := helper.ModelPriceHelper(c, info, info.GetEstimatePromptTokens(), meta)
+					return err
+				}); apiErr != nil {
 					return apiErr
 				}
 			}
@@ -328,9 +361,13 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			target, dialErr := relaychannel.DoWssRequest(adaptor, c, info, nil)
 			if dialErr != nil {
 				apiErr = service.NormalizeViolationFeeError(types.NewError(dialErr, types.ErrorCodeDoRequestFailed))
+				service.FinishRoutingSend(c, apiErr, false, 0)
+				if service.RetryRoutingRebuild(c, retry) {
+					continue
+				}
 				service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 				info.LastError = apiErr
-				decision := service.DecideRelayRetry(c, apiErr, common.RetryTimes-retry.GetRetry())
+				decision := service.DecideRelayRetry(c, apiErr, retryLimit-retry.GetRetry())
 				service.RecordPolicyFailure(c, channel.Id, apiErr, decision)
 				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info)
 				if decision.Action == "retry" {
@@ -403,6 +440,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if err := common.Unmarshal(incoming.body, &event); err != nil {
 				info.StreamStatus.RecordError("invalid upstream websocket event")
 			} else {
+				if event.Type == "response.output_text.delta" || event.Type == "response.audio.delta" {
+					service.MarkRoutingFirstData(c)
+				}
 				if event.Type != "error" && event.StreamID != "" && event.StreamID != create.StreamID {
 					if err := s.writeClient(incoming.kind, incoming.body); err != nil {
 						s.shutdown(websocket.CloseInternalServerErr, "")
@@ -454,11 +494,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						// rejected request; keep the client-facing type stable.
 						rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
 					}
-					rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
-					if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
-						rejected.StatusCode = http.StatusBadRequest
-					}
-					return rejected
+					return responsesWSUpstreamRejection(rejection)
 				}
 				if strings.HasPrefix(event.Type, "response.") {
 					if !accepted {
@@ -785,6 +821,9 @@ func parseResponsesWSEnvelope(message []byte) (responsesWSCreateEvent, string, e
 	var event responsesWSCreateEvent
 	if err := common.Unmarshal(message, &event); err != nil {
 		return event, "", fmt.Errorf("invalid websocket event json: %w", err)
+	}
+	if ojson.GetBytesNoCopy(message, "mowan_routing").Exists() || (len(event.Request) > 0 && ojson.GetBytesNoCopy(event.Request, "mowan_routing").Exists()) {
+		return event, "", errors.New("mowan_routing is only supported by the playground")
 	}
 	streamRaw := event.StreamID
 	if len(streamRaw) == 0 && len(event.Request) > 0 {

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -103,7 +104,7 @@ func TestTryReserveQuotaWithoutRedis(t *testing.T) {
 	assert.Equal(t, 55, getTokenFromDB(t, token.Id).RemainQuota)
 }
 
-func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
+func TestRedisBatchReserveAlwaysCommitsAuthoritativeDatabaseBalance(t *testing.T) {
 	truncateTables(t)
 	resetBatchUpdateTestState(t)
 	useUserCacheMiniRedis(t)
@@ -113,7 +114,7 @@ func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
 	reserved, err := TryReserveUserQuota(user.Id, 8)
 	require.NoError(t, err)
 	assert.True(t, reserved)
-	assert.Equal(t, 10, getUserQuotaFromDB(t, user.Id), "batch delta is not flushed yet")
+	assert.Equal(t, 2, getUserQuotaFromDB(t, user.Id), "balances are committed even while statistics use batch updates")
 
 	reserved, err = TryReserveUserQuota(user.Id, 3)
 	require.NoError(t, err)
@@ -129,7 +130,7 @@ func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
 	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 3, false)
 	require.NoError(t, err)
 	assert.False(t, reserved)
-	assert.Equal(t, 9, getTokenFromDB(t, token.Id).RemainQuota)
+	assert.Equal(t, 2, getTokenFromDB(t, token.Id).RemainQuota)
 
 	batchUpdate()
 	assert.Equal(t, 2, getUserQuotaFromDB(t, user.Id))
@@ -191,18 +192,25 @@ func TestReserveFallsBackToDatabaseWhenRedisIsUnavailable(t *testing.T) {
 	assert.Equal(t, 15, getUserQuotaFromDB(t, user.Id))
 }
 
-func TestSynchronousReserveCompensatesCacheWhenPersistenceFails(t *testing.T) {
+func TestSynchronousReserveLeavesCacheAndFundsUntouchedWhenPersistenceFails(t *testing.T) {
 	truncateTables(t)
 	resetBatchUpdateTestState(t)
 	useUserCacheMiniRedis(t)
 
 	user := createReserveTestUser(t, 10)
 	require.NoError(t, populateUserCache(user))
-	require.NoError(t, DB.Delete(&user).Error)
+	const fail = "reserve_db_failure"
+	require.NoError(t, DB.Callback().Update().Before("gorm:update").Register(fail, func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" || tx.Statement.Table == "tokens" {
+			tx.AddError(errors.New("injected reserve persistence failure"))
+		}
+	}))
+	t.Cleanup(func() { _ = DB.Callback().Update().Remove(fail) })
 
 	reserved, err := TryReserveUserQuota(user.Id, 6)
 	assert.False(t, reserved)
-	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	assert.ErrorContains(t, err, "injected reserve persistence failure")
+	assert.Equal(t, 10, getUserQuotaFromDB(t, user.Id))
 	cached, cacheErr := cacheGetUserBase(user.Id)
 	require.NoError(t, cacheErr)
 	assert.Equal(t, 10, cached.Quota)
@@ -210,14 +218,57 @@ func TestSynchronousReserveCompensatesCacheWhenPersistenceFails(t *testing.T) {
 	token := createReserveTestToken(t, 12)
 	_, err = GetTokenByKey(token.Key, true)
 	require.NoError(t, err)
-	require.NoError(t, DB.Delete(&token).Error)
 	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 7, false)
 	assert.False(t, reserved)
-	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	assert.ErrorContains(t, err, "injected reserve persistence failure")
+	assert.Equal(t, 12, getTokenFromDB(t, token.Id).RemainQuota)
 	cachedToken, cacheErr := cacheGetTokenByKey(token.Key)
 	require.NoError(t, cacheErr)
 	assert.Equal(t, 12, cachedToken.RemainQuota)
 	assert.Zero(t, cachedToken.UsedQuota)
+}
+
+func TestQuotaReserveIgnoresStaleMissingAndUnavailableDisplayCache(t *testing.T) {
+	for _, mode := range []string{"stale-low", "stale-high", "missing", "unavailable"} {
+		t.Run(mode, func(t *testing.T) {
+			truncateTables(t)
+			resetBatchUpdateTestState(t)
+			server := useUserCacheMiniRedis(t)
+			common.BatchUpdateEnabled = true
+			user := createReserveTestUser(t, 20)
+			token := createReserveTestToken(t, 20)
+			require.NoError(t, populateUserCache(user))
+			_, err := GetTokenByKey(token.Key, true)
+			require.NoError(t, err)
+			switch mode {
+			case "stale-low":
+				server.HSet(getUserCacheKey(user.Id), "Quota", "0")
+				server.HSet(getTokenCacheKey(token.Key), "RemainQuota", "0")
+			case "stale-high":
+				server.HSet(getUserCacheKey(user.Id), "Quota", "100000")
+				server.HSet(getTokenCacheKey(token.Key), "RemainQuota", "100000")
+			case "missing":
+				server.Del(getUserCacheKey(user.Id))
+				server.Del(getTokenCacheKey(token.Key))
+			case "unavailable":
+				server.Close()
+			}
+			ok, err := TryReserveUserQuota(user.Id, 5)
+			require.NoError(t, err)
+			require.True(t, ok)
+			ok, err = TryReserveTokenQuota(token.Id, token.Key, 5, false)
+			require.NoError(t, err)
+			require.True(t, ok)
+			ok, err = TryReserveUserQuota(user.Id, 16)
+			require.NoError(t, err)
+			require.False(t, ok)
+			ok, err = TryReserveTokenQuota(token.Id, token.Key, 16, false)
+			require.NoError(t, err)
+			require.False(t, ok)
+			require.Equal(t, 15, getUserQuotaFromDB(t, user.Id))
+			require.Equal(t, 15, getTokenFromDB(t, token.Id).RemainQuota)
+		})
+	}
 }
 
 func TestTokenCacheInitPreservesLiveQuotaAndFenceBlocksStaleSnapshot(t *testing.T) {

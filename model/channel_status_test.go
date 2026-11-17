@@ -100,3 +100,19 @@ func TestSaveStatusStateFromSingleKeySnapshotPreservesUnownedColumns(t *testing.
 	assert.Equal(t, "manual operation", otherInfo["status_reason"])
 	assert.Equal(t, float64(1234), otherInfo["status_time"])
 }
+
+func TestGetNextEnabledKeyFreshChannelAdvancesCachedPollingIndex(t *testing.T) {
+	setupChannelStatusTest(t)
+	channel := Channel{Name: "fresh-key-polling", Key: "first\nsecond", Status: common.ChannelStatusEnabled, Models: "m", Group: "default", ChannelInfo: ChannelInfo{IsMultiKey: true, MultiKeyMode: constant.MultiKeyModePolling}}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, DB.Create(&Ability{ChannelId: channel.Id, Group: "default", Model: "m", Enabled: true}).Error)
+	common.MemoryCacheEnabled = true
+	InitChannelCache()
+	for _, expected := range []string{"first", "second", "first"} {
+		fresh, err := GetChannelById(channel.Id, true)
+		require.NoError(t, err)
+		key, _, apiErr := fresh.GetNextEnabledKey()
+		require.Nil(t, apiErr)
+		require.Equal(t, expected, key)
+	}
+}

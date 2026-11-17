@@ -22,6 +22,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	apitypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -97,6 +98,12 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 		return service.TaskErrorWrapperLocal(errors.New("the channel of the origin task is disabled"), "task_channel_disable", http.StatusBadRequest)
 	}
 	info.LockedChannel = ch
+	if err := service.BindRoutingOrigin(c, info.OriginModelName, originTask.Group, originTask.ChannelId); err != nil {
+		return service.TaskErrorWrapperLocal(err, "origin_task_group_unavailable", http.StatusForbidden)
+	}
+	if service.IsSmartRouting(c) {
+		info.UsingGroup = originTask.Group
+	}
 
 	if originTask.ChannelId != info.ChannelId {
 		key, _, newAPIError := ch.GetNextEnabledKey()
@@ -198,6 +205,13 @@ func ApplyOriginTaskAffinity(c *gin.Context, info *relaycommon.RelayInfo) *dto.T
 // 构建/发送/解析上游请求 → 提交后计费调整(AdjustBillingOnSubmit)。
 // 共享控制器编排负责未落库退款、最终额度预留、落库和结算。
 func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
+	c.Set("mowan_routing_async", true)
+	accepted := false
+	defer func() {
+		if s := service.CurrentRoutingSubmission(c); s != nil && s.State == "sending" && service.IsSmartRouting(c) && !accepted {
+			_ = service.RoutingSubmissionUnknown(c, errors.New("submission ended without a durable acceptance"))
+		}
+	}()
 	info.InitChannelMeta(c)
 
 	// 1. 确定 platform → 创建适配器 → 验证请求
@@ -335,8 +349,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 7. 预扣费：首次尝试创建计费会话；重试时会话已存在，换到更贵的渠道要在
 	//    发起上游请求前补足预扣，余额不足就不发请求。
-	if info.Billing != nil || !info.PriceData.FreeModel {
+	if info.Billing != nil || !info.PriceData.FreeModel || service.IsSmartRouting(c) {
 		info.ForcePreConsume = true
+		if err := service.PrepareRoutingSubmission(c, info); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "routing_prepare_failed", http.StatusForbidden)
+		}
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
 			return nil, service.TaskErrorFromAPIError(apiErr)
 		}
@@ -351,16 +368,27 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		if c.GetBool("mowan_routing_send_claimed") {
+			err = service.RoutingSubmissionUnknown(c, err)
+		}
+		service.FinishRoutingSend(c, apitypes.NewError(err, apitypes.ErrorCodeDoRequestFailed), false, 0)
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError, common.UpstreamAddresses(c)...)
 	}
 	if resp == nil {
-		return nil, service.TaskErrorWrapperLocal(errors.New("upstream returned an empty response"), "fail_to_fetch_task", http.StatusBadGateway)
+		err := service.RoutingSubmissionUnknown(c, errors.New("upstream returned an empty response"))
+		service.FinishRoutingSend(c, apitypes.NewError(err, apitypes.ErrorCodeBadResponse), false, 0)
+		return nil, service.TaskErrorWrapperLocal(err, "fail_to_fetch_task", http.StatusBadGateway)
 	}
 	defer resp.Body.Close()
 	// Any 2xx is a successful submission: task APIs commonly answer 201 Created
 	// or 202 Accepted, and parseSubmitResponse receives the exact status code.
 	if resp.StatusCode/100 != 2 {
 		responseBody, _ := io.ReadAll(resp.Body)
+		if service.IsSmartRouting(c) {
+			err := service.RoutingSubmissionUnknown(c, fmt.Errorf("upstream status %d", resp.StatusCode))
+			service.FinishRoutingSend(c, apitypes.NewErrorWithStatusCode(err, apitypes.ErrorCodeBadResponseStatusCode, resp.StatusCode), false, 0)
+			return nil, service.TaskErrorWrapperLocal(err, "submission_unknown", http.StatusBadGateway)
+		}
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode, common.UpstreamAddresses(c)...)
 	}
 
@@ -368,11 +396,21 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// task barrier and billing settlement.
 	parsed, taskErr := adaptor.ParseResponse(c, resp, info)
 	if taskErr != nil {
+		if service.IsSmartRouting(c) {
+			taskErr.Message = service.RoutingSubmissionUnknown(c, errors.New(taskErr.Message)).Error()
+			taskErr.NoRetry = true
+		}
+		service.FinishRoutingSend(c, apitypes.NewError(errors.New(taskErr.Message), apitypes.ErrorCodeBadResponse), false, 0)
 		return nil, taskErr
 	}
 	if parsed == nil {
-		return nil, service.TaskErrorWrapperLocal(errors.New("task adaptor returned an empty response"), "plugin_submit_response_invalid", http.StatusBadGateway)
+		err := service.RoutingSubmissionUnknown(c, errors.New("task adaptor returned an empty response"))
+		service.FinishRoutingSend(c, apitypes.NewError(err, apitypes.ErrorCodeBadResponse), false, 0)
+		return nil, service.TaskErrorWrapperLocal(err, "plugin_submit_response_invalid", http.StatusBadGateway)
 	}
+	accepted = true
+	service.MarkRoutingBarrier(c, "submission_accepted")
+	service.FinishRoutingSend(c, nil, true, 0)
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota

@@ -16,6 +16,7 @@ import (
 )
 
 func WssHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	c.Set("mowan_realtime", true)
 	info.InitChannelMeta(c)
 
 	adaptor := GetAdaptor(info.ApiType)

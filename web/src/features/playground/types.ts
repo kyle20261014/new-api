@@ -49,6 +49,7 @@ export interface Message {
   isContentComplete?: boolean
   status?: MessageStatus
   errorCode?: string | null
+  submission?: import('@/features/mowan/smart-routing/submission-reference').SubmissionReference
 }
 
 // API payload types
@@ -66,6 +67,7 @@ export interface ContentPart {
 }
 
 export interface ChatCompletionRequest {
+  mowan_routing?: import('@/features/mowan/smart-routing/types').RoutingPolicy
   model: string
   group?: string
   messages: ChatCompletionMessage[]

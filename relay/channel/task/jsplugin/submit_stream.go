@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -198,6 +199,11 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 			readErr = fmt.Errorf("task submit stream ended before the plugin reported completion")
 		}
 		return nil, false, readErr
+	case service.IsSmartRouting(stream.client):
+		if readErr == nil {
+			readErr = fmt.Errorf("task submit stream ended before the plugin reported completion")
+		}
+		return nil, true, readErr
 	case readErr == nil:
 		logger.LogDebug(stream.client, "task_plugin subsystem=adaptor event=relayed_stream_closed plugin=%q reason=eof_before_done", a.plugin.Meta.Key)
 		return result, false, nil

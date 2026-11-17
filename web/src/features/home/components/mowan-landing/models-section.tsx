@@ -21,6 +21,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { RoutingExperience } from '@/features/mowan/smart-routing/routing-experience'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { MODELS_ROW_1, MODELS_ROW_2 } from './data'
@@ -70,7 +71,7 @@ function ModelChip(props: {
 
 export function ModelsSection(props: ModelsSectionProps) {
   const { t } = useTranslation()
-  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
+  const [selectedModel, setSelectedModel] = useState<ModelCapsule | null>(null)
 
   const handleScrollTo = (id: string) => {
     const el = document.querySelector<HTMLElement>(`#${id}`)
@@ -80,13 +81,7 @@ export function ModelsSection(props: ModelsSectionProps) {
   }
 
   const handleModelClick = (model: ModelCapsule) => {
-    setFeedbackMessage(
-      t('mowan.placeholder.notice', {
-        title: model.name,
-        defaultValue: `${model.name}功能即将推出，敬请期待！`,
-      })
-    )
-    setTimeout(() => setFeedbackMessage(null), 2500)
+    setSelectedModel(model)
   }
 
   return (
@@ -176,14 +171,17 @@ export function ModelsSection(props: ModelsSectionProps) {
       </div>
 
       {/* Placeholder Feedback */}
-      {feedbackMessage && (
-        <div
-          role='status'
-          aria-live='polite'
-          className='animate-fade-in mx-auto mb-6 inline-block rounded-full border border-cyan-500/40 bg-cyan-950/90 px-5 py-2 text-xs font-medium text-cyan-200 shadow-xl backdrop-blur-md sm:text-sm'
-        >
-          {feedbackMessage}
-        </div>
+      {selectedModel && (
+        <RoutingExperience
+          key={selectedModel.id}
+          model={selectedModel.name}
+          canChat={selectedModel.category === 'chat'}
+          modelIsDisplayName
+          open
+          onOpenChange={(open) => {
+            if (!open) setSelectedModel(null)
+          }}
+        />
       )}
 
       {/* CTA Button */}

@@ -11,13 +11,13 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/mowan/smartrouting"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/QuantumNous/new-api/constant"
@@ -319,10 +319,14 @@ func Register(c *gin.Context) {
 			ModelLimitsEnabled: false,
 		}
 		token.AllowUserQuotaQuery = true
-		if setting.DefaultUseAutoGroup {
-			token.Group = "auto"
-		}
-		if err := token.Insert(); err != nil {
+		if err := model.DB.Transaction(func(tx *gorm.DB) error {
+			if err := token.InsertTx(tx); err != nil {
+				return err
+			}
+			policy := smartrouting.DefaultPolicy()
+			_, err := model.SaveTokenRoutingTx(tx, &token, &policy, 0, nil, false, false, false)
+			return err
+		}); err != nil {
 			common.ApiErrorT(c, "Failed to create default token")
 			return
 		}

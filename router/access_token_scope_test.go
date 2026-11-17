@@ -71,6 +71,10 @@ var accessTokenExemptRoutes = []string{
 	// API key authentication (TokenAuthReadOnly).
 	"GET /api/usage/token/",
 	"GET /api/log/token",
+	// Routing self management accepts only genuine API keys, never dashboard credentials.
+	"GET /api/mowan/smart-routing/self",
+	"PUT /api/mowan/smart-routing/self",
+	"GET /api/mowan/smart-routing/self/candidates",
 }
 
 // accessTokenHelperRoutes are declared through handlePermissionRoute outside
@@ -78,6 +82,7 @@ var accessTokenExemptRoutes = []string{
 var accessTokenHelperRoutes = map[string]authz.Permission{
 	"GET /api/task_plugin_options": authz.TaskPluginBind,
 	"GET /api/audit":               authz.AuditRead,
+	"POST /api/mowan/smart-routing/submissions/:submission_id/reconcile": authz.RoutingReconcile,
 }
 
 func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {

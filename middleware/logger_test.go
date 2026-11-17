@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -61,10 +62,19 @@ func TestSetUpLoggerMasksQueryCredentials(t *testing.T) {
 }
 
 func TestAccessAndPanicLogsFollowLogRotation(t *testing.T) {
+	const logDirEnv = "NEWAPI_LOG_ROTATION_TEST_DIR"
+	if os.Getenv(logDirEnv) == "" {
+		// The logger owns its file until process exit; the parent owns cleanup.
+		command := exec.Command(os.Args[0], "-test.run=^TestAccessAndPanicLogsFollowLogRotation$")
+		command.Env = append(os.Environ(), logDirEnv+"="+t.TempDir())
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
 	previousMode, previousWriter, previousErrorWriter := gin.Mode(), gin.DefaultWriter, gin.DefaultErrorWriter
 	previousLogDir := *common.LogDir
 	gin.SetMode(gin.TestMode)
-	*common.LogDir = t.TempDir()
+	*common.LogDir = os.Getenv(logDirEnv)
 	t.Cleanup(func() {
 		gin.SetMode(previousMode)
 		gin.DefaultWriter, gin.DefaultErrorWriter = previousWriter, previousErrorWriter

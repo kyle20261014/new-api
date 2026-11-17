@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -46,6 +47,16 @@ func Playground(c *gin.Context) {
 		return
 	}
 	userCache.WriteContext(c)
+	if service.IsSmartRouting(c) {
+		user, err := model.GetUserById(userId, false)
+		if err != nil || user.Status != common.UserStatusEnabled {
+			newAPIError = types.NewError(errors.New("routing_identity_unavailable"), types.ErrorCodeAccessDenied, types.ErrOptionWithSkipRetry())
+			return
+		}
+		user.ToBaseUser().WriteContext(c)
+		Relay(c, types.RelayFormatOpenAI)
+		return
+	}
 
 	tempToken := &model.Token{
 		UserId: userId,

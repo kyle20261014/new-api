@@ -8,12 +8,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/internal/mowan/smartrouting"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
@@ -499,6 +501,67 @@ func taskSubmissionRelayInfo(billing relaycommon.BillingSettler) *relaycommon.Re
 	}
 }
 
+func TestSmartRoutingAcceptedTaskPersistsAfterCancelAndInsertFailure(t *testing.T) {
+	for _, failInsert := range []bool{false, true} {
+		t.Run(fmt.Sprint(failInsert), func(t *testing.T) {
+			var events []string
+			db := setupTaskSubmissionDatabase(t, true, &events)
+			require.NoError(t, model.MigrateRoutingFunding(db))
+			require.NoError(t, model.MigrateRoutingMetrics(db))
+			require.NoError(t, db.AutoMigrate(&model.Channel{}))
+			channel := &model.Channel{Id: 3, Key: "first-key\nprivate-key\nthird-key", Status: common.ChannelStatusEnabled, ChannelInfo: model.ChannelInfo{IsMultiKey: true}}
+			require.NoError(t, db.Create(channel).Error)
+			fund := model.RoutingFundingSession{FundingID: "accepted-fund", UserID: 1, TokenID: 2, Source: "wallet", Quota: 20, Status: "reserved"}
+			require.NoError(t, db.Create(&fund).Error)
+			s := &model.RoutingSubmission{SubmissionID: "accepted-submission", RequestID: "server-request", AttemptNo: 1, UserID: 1, TokenID: 2, FundingID: fund.FundingID, State: "sending", Version: 1, SendOwnerID: "owner", ChannelID: 3, ClientModel: "m", BusinessGroup: "default", ProtocolClass: "async", ProviderKey: "builtin:1:v1", OperationKey: "create", Quota: 20}
+			require.NoError(t, db.Create(s).Error)
+			c := taskSubmissionTestContext()
+			ctx, cancel := context.WithCancel(c.Request.Context())
+			c.Request = c.Request.WithContext(ctx)
+			cancel()
+			c.Set(smartrouting.ContextKey, &model.TokenRouting{Mode: "smart"})
+			c.Set("mowan_routing_submission", s)
+			task := &model.Task{TaskID: "public-task", UserId: 1, ChannelId: 3, Group: "default", Quota: 12, Status: model.TaskStatusSubmitted, Properties: model.Properties{Input: "private prompt"}, PrivateData: model.TaskPrivateData{Key: "private-key", UpstreamTaskID: "provider-task"}}
+			task.SetData(map[string]any{"answer": "retained local result"})
+			if failInsert {
+				require.NoError(t, db.Callback().Create().Before("gorm:create").Register("test:reject-local-task", func(tx *gorm.DB) {
+					if strings.HasSuffix(tx.Statement.Table, "tasks") {
+						tx.AddError(errors.New("simulated local insert failure"))
+					}
+				}))
+			}
+			stored, durable, err := persistAcceptedRoutingTask(c, task)
+			require.True(t, durable)
+			accepted, e := model.GetRoutingSubmission(s.SubmissionID)
+			require.NoError(t, e)
+			require.Equal(t, "accepted", accepted.State)
+			require.Equal(t, "provider-task", accepted.UpstreamTaskID)
+			require.Equal(t, 20, accepted.Quota)
+			require.NotContains(t, accepted.RecoveryJSON, "private prompt")
+			require.NotContains(t, accepted.RecoveryJSON, "private-key")
+			require.NotContains(t, accepted.RecoveryJSON, "retained local result")
+			if failInsert {
+				require.ErrorContains(t, err, "state=accepted")
+				require.NoError(t, db.Callback().Create().Remove("test:reject-local-task"))
+				require.NoError(t, db.Model(channel).Update("key", "first-key\nthird-key").Error)
+				_, e = model.PersistAcceptedRoutingTask(s.SubmissionID)
+				require.ErrorIs(t, e, model.ErrRoutingRecoveryCredentialUnavailable)
+				require.NoError(t, db.Model(channel).Update("key", "third-key\nfirst-key\nprivate-key").Error)
+				stored, e = model.PersistAcceptedRoutingTask(s.SubmissionID)
+				require.NoError(t, e)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "private prompt", stored.Properties.Input)
+				require.Contains(t, string(stored.Data), "retained local result")
+			}
+			require.Positive(t, stored.ID)
+			require.Equal(t, 12, stored.Quota)
+			require.Equal(t, "default", stored.Group)
+			require.Equal(t, "private-key", stored.PrivateData.Key, "same credential is recovered even after key order changes")
+		})
+	}
+}
+
 // Uses the real submit adaptor, expression evaluator, BillingSession, task row
 // and consume log. Set TEST_TASK_DB_DIALECT plus TEST_MYSQL_DSN or
 // TEST_POSTGRES_DSN to exercise the same contract on an external test database.
@@ -545,6 +608,12 @@ func openTaskDialectDatabase(t *testing.T, models ...any) (*gorm.DB, common.Data
 
 func TestImmediateTaskSettlementDatabase(t *testing.T) {
 	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{})
+	fundingTables := []any{&model.RoutingFundingMode{}, &model.RoutingFundingSession{}, &model.RoutingFundingOperation{}, &model.RoutingSubmission{}, &model.SubscriptionPreConsumeRecord{}}
+	for _, table := range fundingTables {
+		require.False(t, db.Migrator().HasTable(table), "shared funding fixture must be empty; existing tables are retained")
+	}
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(fundingTables...)) })
+	require.NoError(t, model.MigrateRoutingFunding(db))
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
 	oldRedis, oldMemory, oldBatch, oldConsume, oldExport := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled
@@ -577,9 +646,12 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 	}{
 		{"partial", "SUCCESS", 2, 2}, {"zero", "SUCCESS", 0, 0}, {"larger", "SUCCESS", 6, 6},
 		{"invalid usage", "SUCCESS", -1, 4}, {"expression failure", "SUCCESS", 7, 4}, {"negative result", "SUCCESS", 8, 4}, {"missing usage", "SUCCESS", nil, 4}, {"failed", "FAILURE", 9, 0},
+		{"legacy accepted insert failure", "SUCCESS", 2, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			var sends atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				sends.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				body := map[string]any{"status": tc.status}
 				if tc.actual != nil {
@@ -615,7 +687,33 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			info.UserSetting.BillingPreference = "wallet_only"
 			info.PublicTaskID = model.GenerateTaskID()
 			info.LockedChannel = &ch
+			if tc.name == "legacy accepted insert failure" {
+				require.NoError(t, db.Callback().Create().Before("gorm:create").Register("a21:reject-accepted-task", func(tx *gorm.DB) {
+					if strings.HasSuffix(tx.Statement.Table, "tasks") {
+						tx.AddError(errors.New("injected legacy accepted task insert failure"))
+					}
+				}))
+				t.Cleanup(func() { require.NoError(t, db.Callback().Create().Remove("a21:reject-accepted-task")) })
+			}
 			outcome, taskErr := executeTaskSubmission(c, info)
+			assert.EqualValues(t, 1, sends.Load())
+			if tc.name == "legacy accepted insert failure" {
+				require.NotNil(t, taskErr)
+				require.Nil(t, outcome)
+				var updated model.User
+				require.NoError(t, db.First(&updated, user.Id).Error)
+				assert.Equal(t, initial, updated.Quota, "records the existing legacy refund after provider acceptance; not proof of non-acceptance")
+				assert.Zero(t, updated.UsedQuota)
+				var submissions, tasks int64
+				require.NoError(t, db.Model(&model.RoutingSubmission{}).Where("user_id = ?", user.Id).Count(&submissions).Error)
+				require.NoError(t, db.Model(&model.Task{}).Where("user_id = ?", user.Id).Count(&tasks).Error)
+				assert.Zero(t, submissions, "legacy without a routing extension has no durable submission barrier")
+				assert.Zero(t, tasks)
+				var funding model.RoutingFundingSession
+				require.NoError(t, db.Where("user_id = ?", user.Id).First(&funding).Error)
+				assert.Equal(t, "refunded", funding.Status)
+				return
+			}
 			require.Nil(t, taskErr)
 			require.NotNil(t, outcome)
 			want := common.QuotaRound(tc.count * 0.01 * common.QuotaPerUnit)
@@ -626,6 +724,9 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			assert.Equal(t, want, stored.Quota)
 			assert.Equal(t, model.TaskStatus(tc.status), stored.Status)
 			assert.Positive(t, stored.FinishTime)
+			require.NotNil(t, stored.PrivateData.RoutingTerminal, "a parsed immediate provider result must retain its terminal proof")
+			assert.Equal(t, tc.status, stored.PrivateData.RoutingTerminal.Status)
+			assert.Positive(t, stored.PrivateData.RoutingTerminal.ObservedAt)
 			assert.Equal(t, float64(4), info.TieredBillingSnapshot.EstimatedQuotaBeforeGroup/(0.01*common.QuotaPerUnit))
 			if tc.status == "SUCCESS" {
 				assert.Equal(t, tc.count, stored.PrivateData.BillingContext.TieredSnapshot.UsageFacts["units"])

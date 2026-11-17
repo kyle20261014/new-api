@@ -788,6 +788,7 @@ func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
 	assert.Contains(t, reloadedLegacy.FailReason, "old system")
 	assert.Equal(t, "Task timed out", reloadedModern.FailReason)
 	assert.Equal(t, initialQuota+modernTaskQuota, getUserQuota(t, userID))
+	assert.Nil(t, reloadedModern.PrivateData.RoutingTerminal)
 	assert.Equal(t, int64(1), countLogs(t))
 }
 
@@ -823,6 +824,8 @@ func TestSweepTimedOutTasksAtTheDefaultDeadline(t *testing.T) {
 	assert.EqualValues(t, model.TaskStatusFailure, reloadedStuck.Status)
 	assert.Equal(t, "Task timed out", reloadedStuck.FailReason)
 	assert.Equal(t, initialQuota+taskQuota, getUserQuota(t, userID))
+	assert.Zero(t, reloadedStuck.Quota)
+	assert.Nil(t, reloadedStuck.PrivateData.RoutingTerminal)
 }
 
 type scriptedPollingAdaptor struct {
@@ -1006,6 +1009,7 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 			if testCase.wantState != "" {
 				assert.JSONEq(t, testCase.wantState, string(persisted.PrivateData.PluginState))
 			}
+			assert.Nil(t, persisted.PrivateData.RoutingTerminal)
 			if testCase.wantRefund {
 				assert.Equal(t, initialQuota+preConsumed, getUserQuota(t, userID))
 				assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
@@ -1016,6 +1020,8 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 			} else {
 				assert.Equal(t, initialQuota, getUserQuota(t, userID))
 				assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+				assert.Equal(t, preConsumed, persisted.Quota)
+				assert.Zero(t, countLogs(t))
 			}
 		})
 	}
@@ -1051,6 +1057,22 @@ func TestUpdateBatchTasksPollClassification(t *testing.T) {
 			wantStatus:   model.TaskStatusInProgress,
 			wantFailures: 1,
 		},
+		{
+			name:         "legacy nonterminal reason still fails and refunds",
+			statusCode:   http.StatusOK,
+			resultStatus: model.TaskStatusInProgress,
+			wantStatus:   model.TaskStatusFailure,
+			wantRefund:   true,
+			wantReason:   "weird",
+		},
+		{
+			name:         "legacy success reason keeps its old failure semantics",
+			statusCode:   http.StatusOK,
+			resultStatus: model.TaskStatusSuccess,
+			wantStatus:   model.TaskStatusFailure,
+			wantRefund:   true,
+			wantReason:   "weird",
+		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -1085,12 +1107,105 @@ func TestUpdateBatchTasksPollClassification(t *testing.T) {
 			if testCase.wantReason != "" {
 				assert.Equal(t, testCase.wantReason, persisted.FailReason)
 			}
+			assert.Nil(t, persisted.PrivateData.RoutingTerminal)
 			if testCase.wantRefund {
 				assert.Equal(t, initialQuota+preConsumed, getUserQuota(t, userID))
+				assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
 				assert.Zero(t, persisted.Quota)
 			} else {
 				assert.Equal(t, initialQuota, getUserQuota(t, userID))
+				assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+				assert.Equal(t, preConsumed, persisted.Quota)
+				assert.Zero(t, countLogs(t))
 			}
 		})
+	}
+}
+
+func seedDurablePollingTask(t *testing.T) (*model.Task, *model.RoutingSubmission) {
+	t.Helper()
+	truncate(t)
+	const id = 710
+	seedUser(t, id, 1000)
+	seedToken(t, id, id, "sk-durable-polling", 1000)
+	seedTaskPollingChannel(t, id, true)
+	fundID := "durable-polling-" + common.GetRandomString(8)
+	s := &model.RoutingSubmission{SubmissionID: fundID, RequestID: fundID, AttemptNo: 1, ChannelID: id, ClientModel: "test-model", BusinessGroup: "default", ProtocolClass: "async", ProviderKey: "test:v1", OperationKey: "video.create"}
+	_, err := model.PrepareRoutingFunding(model.RoutingFundingRequest{FundingID: fundID, OperationID: fundID + ":reserve", UserID: id, TokenID: id, Source: "wallet", Kind: "reserve", Quota: 30}, s)
+	require.NoError(t, err)
+	s, err = model.MarkRoutingSubmissionSending(s.SubmissionID, s.Version, s.SendOwnerID)
+	require.NoError(t, err)
+	task := makeTask(id, id, 30, id, BillingSourceWallet, 0)
+	task.Data, task.Progress, task.SubmitTime = nil, "50%", time.Now().Add(-73*time.Hour).Unix()
+	s, err = model.RecordRoutingSubmissionOutcome(s.SubmissionID, s.Version, "accepted", "durable-provider-task", &model.RoutingTaskRecovery{Task: *task, PrivateData: task.PrivateData}, s.SendOwnerID)
+	require.NoError(t, err)
+	task, err = model.PersistAcceptedRoutingTask(s.SubmissionID)
+	require.NoError(t, err)
+	return task, s
+}
+
+func TestRoutingTaskLocalCutoffKeepsPollingUntilProviderTerminal(t *testing.T) {
+	for _, cutoff := range []string{"timeout", "404", "429", "batch_404", "batch_429", "batch_reason", "single_progress"} {
+		for _, terminal := range []string{model.TaskStatusSuccess, model.TaskStatusFailure} {
+			t.Run(cutoff+"_then_"+terminal, func(t *testing.T) {
+				task, submission := seedDurablePollingTask(t)
+				previousTimeout, previousFailures := constant.TaskTimeoutMinutes, constant.TaskPollMaxFailures
+				constant.TaskTimeoutMinutes, constant.TaskPollMaxFailures = 4320, 1
+				t.Cleanup(func() { constant.TaskTimeoutMinutes, constant.TaskPollMaxFailures = previousTimeout, previousFailures })
+				poll := func(code int, status string) {
+					upstream := task.GetUpstreamTaskID()
+					info := relaycommon.TaskInfo{Status: status, Progress: "100%"}
+					if cutoff == "batch_reason" {
+						info.Reason = "provider informational reason"
+						if status == "" {
+							info.Status, info.Progress = model.TaskStatusInProgress, "45%"
+						}
+					} else if cutoff == "single_progress" && status == "" {
+						info.Status = model.TaskStatusInProgress
+					}
+					if strings.HasPrefix(cutoff, "batch_") {
+						adaptor := &scriptedBatchPollingAdaptor{scriptedPollingAdaptor: scriptedPollingAdaptor{statusCode: code}, results: map[string]*BatchTaskResult{upstream: {TaskInfo: info}}}
+						require.NoError(t, UpdateBatchTasks(context.Background(), adaptor, map[int][]string{task.ChannelId: {upstream}}, map[string]*model.Task{upstream: task}))
+					} else {
+						adaptor := &scriptedPollingAdaptor{statusCode: code, parse: &info}
+						ch := &model.Channel{Id: task.ChannelId, Type: constant.ChannelTypeKling, Key: "sk-test"}
+						require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, ch, upstream, map[string]*model.Task{upstream: task}))
+					}
+				}
+				if cutoff == "timeout" {
+					sweepTimedOutTasks(context.Background())
+				} else if strings.HasSuffix(cutoff, "404") {
+					poll(http.StatusNotFound, "")
+				} else if cutoff == "batch_reason" || cutoff == "single_progress" {
+					poll(http.StatusOK, "")
+				} else {
+					poll(http.StatusTooManyRequests, "")
+				}
+				pending := model.GetAllUnFinishSyncTasks(100)
+				require.Len(t, pending, 1, "a local query failure cannot end a durable task")
+				task = pending[0]
+				assert.EqualValues(t, model.TaskStatusInProgress, task.Status)
+				assert.Nil(t, task.PrivateData.RoutingTerminal)
+				assert.Equal(t, 30, task.Quota)
+				assert.Equal(t, 970, getUserQuota(t, task.UserId))
+				assert.Equal(t, 970, getTokenRemainQuota(t, task.PrivateData.TokenId))
+				poll(http.StatusOK, terminal)
+				require.NoError(t, model.DB.First(task, task.ID).Error)
+				require.NotNil(t, task.PrivateData.RoutingTerminal)
+				assert.Equal(t, terminal, task.PrivateData.RoutingTerminal.Status)
+				var funding model.RoutingFundingSession
+				require.NoError(t, model.DB.First(&funding, "funding_id = ?", submission.FundingID).Error)
+				if terminal == model.TaskStatusFailure {
+					assert.Equal(t, "refunded", funding.Status)
+					assert.Zero(t, task.Quota)
+					assert.Equal(t, 1000, getUserQuota(t, task.UserId))
+					assert.Equal(t, 1000, getTokenRemainQuota(t, task.PrivateData.TokenId))
+				} else {
+					assert.Equal(t, "settled", funding.Status)
+					assert.Equal(t, 970, getUserQuota(t, task.UserId))
+					assert.Equal(t, 970, getTokenRemainQuota(t, task.PrivateData.TokenId))
+				}
+			})
+		}
 	}
 }

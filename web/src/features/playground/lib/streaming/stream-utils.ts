@@ -1,3 +1,8 @@
+import {
+  getSubmissionReference,
+  type SubmissionReference,
+} from '@/features/mowan/smart-routing/submission-reference'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -37,6 +42,7 @@ type StreamErrorPayload = {
 }
 
 export type StreamErrorDetails = {
+  submission?: SubmissionReference
   errorCode?: string
   errorMessage: string
 }
@@ -52,10 +58,18 @@ export function parseStreamErrorDetails(data?: string): StreamErrorDetails {
     const parsed = JSON.parse(data) as StreamErrorPayload
 
     if (!parsed?.error) {
-      return { errorMessage: fallbackMessage }
+      return {
+        errorMessage: fallbackMessage,
+        ...(getSubmissionReference(parsed)
+          ? { submission: getSubmissionReference(parsed) }
+          : {}),
+      }
     }
 
     return {
+      ...(getSubmissionReference(parsed)
+        ? { submission: getSubmissionReference(parsed) }
+        : {}),
       errorCode: parsed.error.code || undefined,
       errorMessage: parsed.error.message || fallbackMessage,
     }

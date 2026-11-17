@@ -155,6 +155,7 @@ func main() {
 	// (DB-lease dedup across masters + run history), then start the runner that
 	// schedules and executes them. Master-only execution and the UpdateTask
 	// switch are enforced inside the runner and each handler's Enabled().
+	service.RegisterRoutingRecoveryTasks()
 	controller.RegisterScheduledSystemTasks()
 	service.StartSystemTaskRunner()
 
@@ -230,6 +231,11 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(common.LogText("server forced to shutdown: %v", err))
 	}
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := service.CloseRoutingMetrics(flushCtx); err != nil {
+		common.SysError(common.LogText("routing metrics shutdown flush failed: %v", err))
+	}
+	flushCancel()
 	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
 	if common.DataExportEnabled {
 		model.SaveQuotaDataCache()
@@ -306,10 +312,44 @@ func InitResources() error {
 		common.FatalLog(common.LogText("failed to initialize database: %s", err.Error()))
 		return err
 	}
+	mode := os.Getenv("MOWAN_FUNDING_MODE")
+	if mode == "" {
+		mode = "sync_db_v1"
+	}
+	nodeCount, err := strconv.Atoi(os.Getenv("MOWAN_FUNDING_NODE_COUNT"))
+	if err != nil || nodeCount <= 0 {
+		return fmt.Errorf("%w: MOWAN_FUNDING_NODE_COUNT must be a positive integer", model.ErrRoutingFundingMigrationBlocked)
+	}
+	deploymentID, candidateCommit := os.Getenv("MOWAN_FUNDING_DEPLOYMENT_ID"), os.Getenv("MOWAN_FUNDING_CANDIDATE_COMMIT")
 	if common.IsMasterNode {
 		if err = model.MigrateIdataRiver(model.DB); err != nil {
 			return fmt.Errorf("initialize iDataRiver payment schema: %w", err)
 		}
+		if err = model.MigrateTokenRouting(model.DB); err != nil {
+			return fmt.Errorf("initialize smart routing schema: %w", err)
+		}
+		if err = model.MigrateRoutingMetrics(model.DB); err != nil {
+			return fmt.Errorf("initialize smart routing observations: %w", err)
+		}
+		if err = model.MigrateRoutingFunding(model.DB); err != nil {
+			return fmt.Errorf("initialize smart routing funding: %w", err)
+		}
+		var receipt []byte
+		if path := os.Getenv("MOWAN_FUNDING_RECONCILIATION_RECEIPT"); path != "" {
+			receipt, err = os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("read reviewed funding migration receipt: %w", err)
+			}
+			if len(receipt) > 65536 {
+				return errors.New("funding migration receipt exceeds 64 KiB")
+			}
+		}
+		if err = model.InitializeRoutingFundingMode(model.DB, string(receipt), mode, deploymentID, candidateCommit, nodeCount); err != nil {
+			return fmt.Errorf("funding migration blocked; reviewed reconciliation, old-node isolation and capacity evidence required: %w", err)
+		}
+	}
+	if err = model.ValidateRoutingFundingMode(model.DB, mode, deploymentID, candidateCommit, nodeCount); err != nil {
+		return fmt.Errorf("validate shared funding authority: %w", err)
 	}
 	if err = authz.Init(model.DB); err != nil {
 		common.FatalLog(common.LogText("failed to initialize authorization: %s", err.Error()))

@@ -111,8 +111,16 @@ func GetChannel(
 	retry int,
 	filters []dto.ChannelFilter,
 ) (*Channel, error) {
+	return getChannelExcluding(group, model, retry, filters, nil)
+}
+
+func getChannelExcluding(group, model string, retry int, filters []dto.ChannelFilter, excluded map[int]bool) (*Channel, error) {
 	var abilities []Ability
-	err := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).Order("priority DESC, weight DESC").Find(&abilities).Error
+	groups := []string{group}
+	if excluded != nil && group != "all" {
+		groups = append(groups, "all")
+	}
+	err := DB.Where(DB.Statement.Quote("group")+" IN ? and model = ? and enabled = ?", groups, model, true).Order("priority DESC, weight DESC").Find(&abilities).Error
 	if err != nil {
 		return nil, err
 	}
@@ -120,11 +128,24 @@ func GetChannel(
 	// Like the memory cache, retry with the routing name (for example without
 	// @ modifiers) when no channel serves the exact name.
 	if normalized := ratio_setting.RoutingMatchModelName(model); len(abilities) == 0 && normalized != "" && normalized != model {
-		err = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, normalized, true).Order("priority DESC, weight DESC").Find(&abilities).Error
+		err = DB.Where(DB.Statement.Quote("group")+" IN ? and model = ? and enabled = ?", groups, normalized, true).Order("priority DESC, weight DESC").Find(&abilities).Error
 		if err != nil {
 			return nil, err
 		}
 		abilities = filterAbilitiesByConstraints(abilities, model, filters)
+	}
+	if len(excluded) > 0 {
+		abilities = lo.Filter(abilities, func(ability Ability, _ int) bool { return !excluded[ability.ChannelId] })
+	}
+	if excluded != nil {
+		seen := map[int]bool{}
+		abilities = lo.Filter(abilities, func(a Ability, _ int) bool {
+			if seen[a.ChannelId] {
+				return false
+			}
+			seen[a.ChannelId] = true
+			return true
+		})
 	}
 	if len(abilities) > 0 {
 		priorities := make([]int64, 0)

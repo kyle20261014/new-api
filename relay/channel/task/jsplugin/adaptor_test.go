@@ -17,10 +17,12 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	taskdto "github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/internal/mowan/smartrouting"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -2321,6 +2323,77 @@ func TestTaskSubmitStreamRelaysToNativeClients(t *testing.T) {
 			} else {
 				assert.ErrorIs(t, err, tc.wantErr)
 			}
+		})
+	}
+}
+
+func TestSmartRoutingRelayedSubmitFailureStaysDurableUnknown(t *testing.T) {
+	for _, kind := range []string{"disconnect", "parse_failure", "eof_before_done"} {
+		t.Run(kind, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(1)
+			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+			old := model.DB
+			model.DB = db
+			t.Cleanup(func() { model.DB = old })
+			require.NoError(t, model.MigrateRoutingFunding(db))
+			require.NoError(t, model.MigrateRoutingMetrics(db))
+			fund := model.RoutingFundingSession{FundingID: "stream-fund", UserID: 1, TokenID: 2, Source: "wallet", Quota: 20, Status: "reserved"}
+			require.NoError(t, db.Create(&fund).Error)
+			s := &model.RoutingSubmission{SubmissionID: "stream-submission", RequestID: "server-stream", AttemptNo: 1, UserID: 1, TokenID: 2, FundingID: fund.FundingID, State: "sending", Version: 1, SendOwnerID: "owner", SendLeaseUntil: time.Now().Add(time.Minute).Unix(), ChannelID: 3, ClientModel: "alias", BusinessGroup: "default", ProtocolClass: "async", ProviderKey: "builtin:1:v1", OperationKey: "create", Quota: 20}
+			require.NoError(t, db.Create(s).Error)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				frame := "data: {\"part\":\"a\",\"units\":1}\n\n"
+				if kind == "parse_failure" {
+					frame = "data: {\"part\":\"unreadable\",\"units\":1,\"complete\":true}\n\n"
+				}
+				_, _ = io.WriteString(w, frame)
+				w.(http.Flusher).Flush()
+				if kind == "disconnect" {
+					conn, _, e := w.(http.Hijacker).Hijack()
+					if e == nil {
+						_ = conn.Close()
+					}
+				}
+			}))
+			defer server.Close()
+			resp, err := http.Get(server.URL)
+			require.NoError(t, err)
+			plugin, err := pluginruntime.CompilePlugin(documentStreamPlugin, pluginruntime.Options{})
+			require.NoError(t, err)
+			info := &relaycommon.RelayInfo{OriginModelName: "alias", ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "document", ChannelBaseUrl: server.URL}, TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "public-document"}}
+			a := New(plugin)
+			a.Init(info)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/compile", nil)
+			c.Set(smartrouting.ContextKey, &model.TokenRouting{Mode: "smart"})
+			c.Set("mowan_routing_submission", s)
+			c.Set(pluginruntime.ContextKeyPinnedRoute, pluginruntime.PinnedRoute{Plugin: plugin, Route: pluginruntime.Route{Method: http.MethodPost, Path: "/compile", Type: pluginruntime.RouteTypeSubmit}})
+			c.Set("task_request", map[string]any{})
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+			_, err = a.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			submitted, taskErr := a.ParseResponse(c, resp, info)
+			require.Nil(t, submitted)
+			require.NotNil(t, taskErr)
+			require.True(t, taskErr.NoRetry)
+			require.True(t, c.Writer.Written())
+			require.Contains(t, taskErr.Message, "state=unknown")
+			stored, err := model.GetRoutingSubmission(s.SubmissionID)
+			require.NoError(t, err)
+			require.Equal(t, "unknown", stored.State)
+			require.Empty(t, stored.UpstreamTaskID)
+			require.NoError(t, db.First(&fund, "funding_id = ?", fund.FundingID).Error)
+			require.Equal(t, "reserved", fund.Status)
+			require.Equal(t, 20, fund.Quota)
+			var terminalCount int64
+			require.NoError(t, db.Model(&model.RoutingTerminalObservation{}).Where("status IN ?", []string{"accepted", "success"}).Count(&terminalCount).Error)
+			require.Zero(t, terminalCount)
 		})
 	}
 }

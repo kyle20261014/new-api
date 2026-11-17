@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -38,6 +39,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CopyButton } from '@/components/copy-button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth-store'
@@ -68,6 +70,48 @@ export function MessageError({
   const { t } = useTranslation()
   const user = useAuthStore((s) => s.auth.user)
   const errorState = getMessageErrorState(message, isAdminRole(user?.role))
+
+  if (message.submission) {
+    return (
+      <Alert className={className}>
+        <AlertCircle />
+        <AlertTitle>
+          {t(
+            message.submission.submission_status === 'unknown'
+              ? 'Submission outcome unknown'
+              : 'Accepted'
+          )}
+        </AlertTitle>
+        <AlertDescription className='space-y-3'>
+          <p>
+            {t(
+              'The upstream may have accepted this submission. Keep this ID and wait for reconciliation; do not create it again.'
+            )}
+          </p>
+          <CopyButton
+            value={message.submission.submission_id}
+            aria-label={t('Copy submission ID')}
+            size='default'
+            className='h-auto min-h-11 max-w-full break-all whitespace-normal'
+          >
+            {message.submission.submission_id}
+          </CopyButton>
+          <Button
+            render={
+              <Link
+                to='/usage-logs/$section'
+                params={{ section: 'task' }}
+                search={{ submissionId: message.submission.submission_id }}
+              />
+            }
+            className='min-h-11'
+          >
+            {t('Track submission')}
+          </Button>
+        </AlertDescription>
+      </Alert>
+    )
+  }
 
   if (!errorState) {
     return null

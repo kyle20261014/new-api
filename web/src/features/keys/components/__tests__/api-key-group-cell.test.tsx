@@ -20,6 +20,8 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test } from 'vitest'
 
+import type { RoutingPolicy } from '@/features/mowan/smart-routing/types'
+
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { TooltipProvider } = await import('@/components/ui/tooltip')
@@ -43,6 +45,7 @@ await i18n.use(initReactI18next).init({
 
 function CellHarness(props: {
   group: string
+  routing?: RoutingPolicy | null
   ratio?: number | string
   crossGroupRetry?: boolean
   shouldReduceMotion?: boolean
@@ -52,6 +55,7 @@ function CellHarness(props: {
       <TooltipProvider>
         <ApiKeyGroupCell
           group={props.group}
+          routing={props.routing}
           ratio={props.ratio}
           crossGroupRetry={props.crossGroupRetry ?? false}
           shouldReduceMotion={props.shouldReduceMotion ?? false}
@@ -62,6 +66,53 @@ function CellHarness(props: {
 }
 
 describe('API key group table cell', () => {
+  test('labels a saved balanced smart key instead of inheriting its empty legacy group', () => {
+    render(
+      <CellHarness
+        group=''
+        routing={{ schema_version: 1, mode: 'smart', strategy: 'balanced' }}
+      />
+    )
+    expect(screen.getByText('Smart routing')).toBeInTheDocument()
+    expect(screen.getByText('Balanced')).toBeInTheDocument()
+    expect(screen.queryByText('Inherited')).not.toBeInTheDocument()
+    expect(screen.queryByText('User Group')).not.toBeInTheDocument()
+  })
+  test('summarizes saved custom model routing instead of its legacy Auto group', () => {
+    render(
+      <CellHarness
+        group='auto'
+        routing={{
+          schema_version: 1,
+          mode: 'smart',
+          strategy: 'custom',
+          models: {
+            chat: {
+              groups: ['priority'],
+              strategy: 'manual',
+              try_soft_offline: false,
+            },
+          },
+        }}
+      />
+    )
+    expect(screen.getByText('Smart routing')).toBeInTheDocument()
+    expect(
+      screen.getByText('Custom per model · Models: 1 · chat')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Cross-group')).not.toBeInTheDocument()
+  })
+  test('shows the saved fixed group rather than an outdated legacy group', () => {
+    render(
+      <CellHarness
+        group='old-group'
+        routing={{ schema_version: 1, mode: 'fixed', fixed_group: 'priority' }}
+      />
+    )
+    expect(screen.getByText('Fixed group')).toBeInTheDocument()
+    expect(screen.getByText('priority')).toBeInTheDocument()
+    expect(screen.queryByText('old-group')).not.toBeInTheDocument()
+  })
   test('keeps the group and compact localized multiplier together with one subtle flowing edge', () => {
     const { container } = render(
       <CellHarness group='auto' ratio='自动' crossGroupRetry />

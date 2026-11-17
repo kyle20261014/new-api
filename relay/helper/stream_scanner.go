@@ -307,6 +307,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				continue
 			}
 			if data != "[DONE]" {
+				service.ObserveRoutingStreamData(c, data)
 				info.SetFirstResponseTime()
 				info.ReceivedResponseCount++
 

@@ -1,5 +1,10 @@
 package model
 
+import (
+	"context"
+	"gorm.io/gorm"
+)
+
 type Midjourney struct {
 	Id          int    `json:"id"`
 	Code        int    `json:"code"`
@@ -24,8 +29,9 @@ type Midjourney struct {
 	Buttons     string `json:"buttons"`
 	Properties  string `json:"properties"`
 
-	TokenId          int `json:"-" gorm:"default:0"`
-	BillingChannelId int `json:"-" gorm:"default:0"`
+	TokenId          int                         `json:"-" gorm:"default:0"`
+	BillingChannelId int                         `json:"-" gorm:"default:0"`
+	RoutingTerminal  *RoutingTaskTerminalReceipt `json:"-" gorm:"type:text"`
 }
 
 // TaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -96,8 +102,9 @@ func GetAllTasks(startIdx int, num int, queryParams TaskQueryParams) []*Midjourn
 func GetAllUnFinishTasks() []*Midjourney {
 	var tasks []*Midjourney
 	var err error
-	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Find(&tasks).Error
+	submissions := routingTaskSubmissionReferences(DB, "Midjourney")
+	err = DB.Where("progress != ? OR EXISTS (?)", "100%", submissions).
+		Where("status NOT IN ? OR NOT EXISTS (?)", []string{TaskStatusFailure, TaskStatusSuccess}, submissions).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -110,8 +117,10 @@ func GetAllUnFinishTasks() []*Midjourney {
 // the scheduler skips creating a row entirely.
 func HasUnfinishedMidjourneyTasks() bool {
 	var id int
+	submissions := routingTaskSubmissionReferences(DB, "Midjourney")
 	err := DB.Model(&Midjourney{}).
-		Where("progress != ?", "100%").
+		Where("progress != ? OR EXISTS (?)", "100%", submissions).
+		Where("status NOT IN ? OR NOT EXISTS (?)", []string{TaskStatusFailure, TaskStatusSuccess}, submissions).
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0
@@ -168,9 +177,7 @@ func (midjourney *Midjourney) Insert() error {
 }
 
 func (midjourney *Midjourney) Update() error {
-	var err error
-	err = DB.Save(midjourney).Error
-	return err
+	return DB.Model(midjourney).Select("*").Omit("quota", "token_id", "billing_channel_id", "routing_terminal").Updates(midjourney).Error
 }
 
 func (midjourney *Midjourney) UpdateBillingState() error {
@@ -192,11 +199,29 @@ func (midjourney *Midjourney) GetBillingChannelId() int {
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
 // Uses Model().Select("*").Updates() to avoid GORM Save()'s INSERT fallback.
 func (midjourney *Midjourney) UpdateWithStatus(fromStatus string) (bool, error) {
-	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").Updates(midjourney)
+	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").Omit("quota", "token_id", "billing_channel_id", "routing_terminal").Updates(midjourney)
 	if result.Error != nil {
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+// UpdateWithUpstreamStatus is used only after parsing a real provider terminal.
+func (midjourney *Midjourney) UpdateWithUpstreamStatus(ctx context.Context, fromStatus string) (bool, error) {
+	won := false
+	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if midjourney.Status == "SUCCESS" || midjourney.Status == "FAILURE" {
+			receipt, err := NewRoutingTerminalReceipt(tx, midjourney.Status)
+			if err != nil {
+				return err
+			}
+			midjourney.RoutingTerminal = receipt
+		}
+		r := tx.Model(midjourney).Where("status = ?", fromStatus).Select("*").Omit("quota", "token_id", "billing_channel_id").Updates(midjourney)
+		won = r.RowsAffected > 0
+		return r.Error
+	})
+	return won, err
 }
 
 func MjBulkUpdate(mjIds []string, params map[string]any) error {

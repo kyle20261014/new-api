@@ -1,3 +1,5 @@
+import type { SubmissionReference } from '@/features/mowan/smart-routing/submission-reference'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -28,7 +30,8 @@ export function updateAssistantMessageWithError(
   messages: Message[],
   errorMessage: string,
   errorCode?: string,
-  title: string = ERROR_MESSAGES.API_REQUEST_ERROR
+  title: string = ERROR_MESSAGES.API_REQUEST_ERROR,
+  submission?: SubmissionReference
 ): Message[] {
   return updateLastAssistantMessage(messages, (message) => {
     const updatedMessage = updateCurrentVersionContent(
@@ -41,6 +44,7 @@ export function updateAssistantMessageWithError(
       status: MESSAGE_STATUS.ERROR,
       isReasoningStreaming: false,
       errorCode: errorCode || null,
+      ...(submission ? { submission } : {}),
     })
   })
 }

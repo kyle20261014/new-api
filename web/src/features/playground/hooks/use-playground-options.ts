@@ -52,6 +52,8 @@ import type { GroupOption, ModelOption, PlaygroundConfig } from '../types'
 
 type UsePlaygroundOptionsParams = {
   currentGroup: string
+  routingGroup?: string
+  preserveUnavailableModel?: boolean
   currentModel: string
   setGroups: (groups: GroupOption[]) => void
   setModels: (models: ModelOption[]) => void
@@ -63,6 +65,8 @@ type UsePlaygroundOptionsParams = {
 
 export function usePlaygroundOptions({
   currentGroup,
+  routingGroup,
+  preserveUnavailableModel,
   currentModel,
   setGroups,
   setModels,
@@ -76,10 +80,10 @@ export function usePlaygroundOptions({
     isError: isModelsError,
     isLoading: isLoadingModels,
   } = useQuery({
-    queryKey: ['playground-models', currentGroup],
+    queryKey: ['playground-models', routingGroup ?? currentGroup],
     queryFn: async () =>
-      requireServerSuccess(await getUserModels(currentGroup)),
-    enabled: currentGroup !== '',
+      requireServerSuccess(await getUserModels(routingGroup ?? currentGroup)),
+    enabled: routingGroup !== undefined || currentGroup !== '',
   })
 
   const {
@@ -119,6 +123,12 @@ export function usePlaygroundOptions({
     if (!modelsData) return
 
     setModels(modelsData)
+    if (
+      preserveUnavailableModel &&
+      currentModel &&
+      !modelsData.some((model) => model.value === currentModel)
+    )
+      {return}
     const fallback = getModelFallback(modelsData, currentModel)
 
     if (fallback) {
@@ -129,18 +139,25 @@ export function usePlaygroundOptions({
     if (shouldClearModelForGroup(modelsData, currentModel)) {
       updateConfig('model', '')
     }
-  }, [modelsData, currentModel, setModels, updateConfig])
+  }, [
+    modelsData,
+    currentModel,
+    preserveUnavailableModel,
+    setModels,
+    updateConfig,
+  ])
 
   useEffect(() => {
     if (!groupsData) return
 
     setGroups(groupsData)
+    if (routingGroup !== undefined) return
     const fallback = getGroupFallback(groupsData, currentGroup)
 
     if (fallback) {
       updateConfig('group', fallback)
     }
-  }, [groupsData, currentGroup, setGroups, updateConfig])
+  }, [groupsData, currentGroup, routingGroup, setGroups, updateConfig])
 
   return {
     isLoadingModels,

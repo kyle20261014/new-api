@@ -70,6 +70,7 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+	defer service.ReleaseRoutingUnusedProbes(c)
 
 	requestId := c.GetString(common.RequestIdKey)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
@@ -173,8 +174,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+	retryLimit := common.RetryTimes
+	if service.IsSmartRouting(c) {
+		retryLimit = max(0, retryLimit)
+	}
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for ; retryParam.GetRetry() <= retryLimit; retryParam.IncreaseRetry() {
 		relayInfo.StreamStatus = nil
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
@@ -186,7 +191,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		service.AppendUsedChannel(c, channel.Id)
-		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
+		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo, func() error {
+			var meta *types.TokenCountMeta
+			if saved, ok := c.Get("mowan_routing_billing_meta"); ok {
+				meta, _ = saved.(*types.TokenCountMeta)
+			} else if relayInfo.Request != nil {
+				meta = relayInfo.Request.GetTokenCountMeta()
+			}
+			_, err := helper.ModelPriceHelper(c, relayInfo, relayInfo.GetEstimatePromptTokens(), meta)
+			return err
+		}); billingErr != nil {
 			newAPIError = billingErr
 			break
 		}
@@ -216,14 +230,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			service.MarkRequestPolicySuccess(c, relayInfo.StreamStatus)
+			service.FinishRoutingSend(c, nil, service.RequestPolicy(c).Successful, 0)
 			relayInfo.LastError = nil
 			return
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
+		service.FinishRoutingSend(c, newAPIError, false, 0)
+		if service.RetryRoutingRebuild(c, retryParam) {
+			continue
+		}
 		relayInfo.LastError = newAPIError
 
-		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		decision := service.DecideRelayRetry(c, newAPIError, retryLimit-retryParam.GetRetry())
 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo)
 
@@ -296,6 +315,20 @@ var upgrader = websocket.Upgrader{
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+	if service.IsSmartRouting(c) {
+		channel, group, selectErr := service.SelectChannelForRequest(c, info.OriginModelName, retryParam)
+		if selectErr != nil {
+			return nil, types.NewError(errors.New(selectErr.Message), selectErr.Code, types.ErrOptionWithSkipRetry())
+		}
+		info.UsingGroup = group
+		info.UserGroup = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+		service.RequestPolicy(c).BeginAttempt(channel, group)
+		if setupErr := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName); setupErr != nil {
+			return nil, setupErr
+		}
+		return channel, nil
+	}
 	if info.ChannelMeta == nil {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
@@ -334,6 +367,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 }
 
 func RelayMidjourney(c *gin.Context) {
+	defer service.ReleaseRoutingUnusedProbes(c)
 	policy := service.RequestPolicy(c)
 	defer func() {
 		if policy.Attempts > 0 && !policy.Successful {
@@ -510,6 +544,8 @@ func executeTaskSubmissionWith(
 	relayInfo *relaycommon.RelayInfo,
 	submit taskSubmitAttempt,
 ) (*taskSubmissionOutcome, *taskdto.TaskError) {
+	c.Set("mowan_routing_async", true)
+	defer service.ReleaseRoutingUnusedProbes(c)
 	policy := service.RequestPolicy(c)
 	diagnostics := newTaskPluginSubmitDiagnostics(c)
 	diagnostics.start(relayInfo)
@@ -539,7 +575,11 @@ func executeTaskSubmissionWith(
 		Retry:       common.GetPointer(0),
 	}
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	retryLimit := common.RetryTimes
+	if service.IsSmartRouting(c) {
+		retryLimit = max(0, retryLimit)
+	}
+	for ; retryParam.GetRetry() <= retryLimit; retryParam.IncreaseRetry() {
 		stage = "select_channel"
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
 			diagnostics.cancelled("before_attempt", retryParam.GetRetry()+1)
@@ -548,7 +588,7 @@ func executeTaskSubmissionWith(
 		}
 		var channel *model.Channel
 
-		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
+		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil && !service.IsSmartRouting(c) {
 			channel = lockedCh
 			policy.BeginAttempt(channel, relayInfo.UsingGroup)
 			if retryParam.GetRetry() > 0 {
@@ -583,7 +623,7 @@ func executeTaskSubmissionWith(
 
 		stage = "submit"
 		result, taskErr = submit(c, relayInfo)
-		if requestErr := c.Request.Context().Err(); requestErr != nil {
+		if requestErr := c.Request.Context().Err(); requestErr != nil && !(service.IsSmartRouting(c) && result != nil && taskErr == nil) {
 			diagnostics.cancelled("after_submit", retryParam.GetRetry()+1)
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 			break
@@ -595,7 +635,7 @@ func executeTaskSubmissionWith(
 
 		taskAPIError := taskSubmissionAPIError(taskErr)
 		relayInfo.LastError = taskAPIError
-		decision := decideTaskRetry(c, taskErr, common.RetryTimes-retryParam.GetRetry())
+		decision := decideTaskRetry(c, taskErr, retryLimit-retryParam.GetRetry())
 		service.RecordPolicyFailure(c, channel.Id, taskAPIError, decision)
 		if !taskErr.LocalError {
 			processChannelError(c,
@@ -627,7 +667,7 @@ func executeTaskSubmissionWith(
 		diagnostics.failed("submit", "missing_result", taskErr, false)
 		return nil, taskErr
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil {
+	if requestErr := c.Request.Context().Err(); requestErr != nil && !service.IsSmartRouting(c) {
 		diagnostics.cancelled("before_reserve", retryParam.GetRetry()+1)
 		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 	}
@@ -637,7 +677,7 @@ func executeTaskSubmissionWith(
 	// after the barrier normally has a zero positive delta. A relayed event
 	// stream is billed even when this reserve fails: settlement then charges
 	// past the available quota, as it does for any usage above its reservation.
-	if relayInfo.Billing != nil {
+	if relayInfo.Billing != nil && !service.IsSmartRouting(c) {
 		stage = "reserve"
 		diagnostics.reserve("reserve_start", result.Quota)
 		if reserveErr := relayInfo.Billing.Reserve(result.Quota); reserveErr != nil {
@@ -651,7 +691,7 @@ func executeTaskSubmissionWith(
 			diagnostics.reserve("reserve_complete", result.Quota)
 		}
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil {
+	if requestErr := c.Request.Context().Err(); requestErr != nil && !service.IsSmartRouting(c) {
 		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
 		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 	}
@@ -722,8 +762,24 @@ func executeTaskSubmissionWith(
 		}
 	}
 	diagnostics.insertStart(task)
-	if insertErr := task.InsertWithContext(c.Request.Context(), insertOmits...); insertErr != nil {
+	var insertErr error
+	if service.IsSmartRouting(c) {
+		var accepted bool
+		task, accepted, insertErr = persistAcceptedRoutingTask(c, task)
+		durable = accepted
+	} else {
+		if immediateTerminal {
+			task.PrivateData.RoutingTerminal, insertErr = model.NewRoutingTerminalReceipt(model.DB.WithContext(c.Request.Context()), string(task.Status))
+		}
+		if insertErr == nil {
+			insertErr = task.InsertWithContext(c.Request.Context(), insertOmits...)
+		}
+	}
+	if insertErr != nil {
 		common.SysError(common.LogText("insert task error: %s", insertErr.Error()))
+		if service.IsSmartRouting(c) {
+			return nil, service.TaskErrorWrapperLocal(insertErr, "routing_task_persistence_pending", http.StatusBadGateway)
+		}
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
 		diagnostics.failed("insert", "database_error", taskErr, false)
 		// The client of a relayed event stream already holds the vendor's
@@ -758,6 +814,36 @@ func executeTaskSubmissionWith(
 	diagnostics.complete(task, result.Quota)
 
 	return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil
+}
+
+func persistAcceptedRoutingTask(c *gin.Context, task *model.Task) (*model.Task, bool, error) {
+	s := service.CurrentRoutingSubmission(c)
+	if s == nil {
+		return task, false, errors.New("routing_submission_missing")
+	}
+	copyTask := *task
+	copyTask.Properties.Input = ""
+	copyTask.Data = nil
+	private := copyTask.PrivateData
+	private.Key = ""
+	copyTask.PrivateData = model.TaskPrivateData{}
+	accepted, err := model.RecordRoutingSubmissionOutcome(s.SubmissionID, s.Version, "accepted", task.GetUpstreamTaskID(), &model.RoutingTaskRecovery{Task: copyTask, PrivateData: private, CredentialFingerprint: model.RoutingCredentialFingerprint(task.PrivateData.Key)}, s.SendOwnerID)
+	if err != nil {
+		return task, false, service.RoutingSubmissionUnknown(c, err)
+	}
+	c.Set("mowan_routing_submission", accepted)
+	stored, err := model.PersistAcceptedRoutingTask(accepted.SubmissionID)
+	if err != nil {
+		return task, true, fmt.Errorf("submission_id=%s state=accepted: %w", accepted.SubmissionID, err)
+	}
+	if len(task.Data) > 0 || task.Properties.Input != "" || task.PrivateData.Key != "" {
+		stored.PrivateData.Key = task.PrivateData.Key
+		if err := model.DB.Model(&model.Task{}).Where("id = ?", stored.ID).Updates(map[string]any{"data": task.Data, "properties": task.Properties, "private_data": stored.PrivateData}).Error; err != nil {
+			return stored, true, fmt.Errorf("submission_id=%s state=accepted: local task retention: %w", accepted.SubmissionID, err)
+		}
+		stored.Data, stored.Properties = task.Data, task.Properties
+	}
+	return stored, true, nil
 }
 
 func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
@@ -856,6 +942,14 @@ func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
 // decideTaskRetry is the single retry decision for task submissions. The
 // reason is recorded in the request policy decision events of the log details.
 func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int) service.PolicyDecision {
+	if service.IsSmartRouting(c) {
+		if reason := service.RoutingRetryBarrier(c); reason != "" {
+			return service.PolicyDecision{Action: "stop", Reason: reason, Source: "routing"}
+		}
+		if taskErr != nil && taskErr.LocalError {
+			return service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "routing"}
+		}
+	}
 	stop := service.PolicyDecision{Action: "stop", Source: "system"}
 	retry := service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "system"}
 	switch {

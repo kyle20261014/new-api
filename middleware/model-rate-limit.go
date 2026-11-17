@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
@@ -177,6 +178,10 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 			c.Next()
 			return
 		}
+		smart := service.IsSmartRouting(c)
+		if smart {
+			defer routingGroupRateLimits(c)()
+		}
 
 		// 计算限流参数
 		duration := rateLimitDurationSeconds(setting.ModelRequestRateLimitDurationMinutes)
@@ -193,7 +198,7 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 		// 其余分组共用该用户的全局计数
 		subject := strconv.Itoa(c.GetInt("id"))
 		groupTotalCount, groupSuccessCount, found := setting.GetGroupRateLimit(group)
-		if found {
+		if found && !smart {
 			totalMaxCount = groupTotalCount
 			successMaxCount = groupSuccessCount
 			subject += ":" + group

@@ -21,14 +21,19 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PromptInputButton } from '@/components/ai-elements/prompt-input'
-import { ModelGroupSelector } from '@/components/model-group-selector'
+import {
+  ModelGroupSelector,
+  ModelSelector,
+} from '@/components/model-group-selector'
 
 import { getInputControlState } from '../../lib'
 import type { GroupOption, ModelOption } from '../../types'
 
 type PlaygroundInputControlsProps = {
   disabled?: boolean
+  submitDisabled?: boolean
   groups: GroupOption[]
+  hideGroup?: boolean
   groupValue: string
   isGenerating?: boolean
   isModelLoading?: boolean
@@ -43,7 +48,9 @@ type PlaygroundInputControlsProps = {
 
 export function PlaygroundInputControls({
   disabled,
+  submitDisabled,
   groups,
+  hideGroup,
   groupValue,
   isGenerating,
   isModelLoading = false,
@@ -67,17 +74,26 @@ export function PlaygroundInputControls({
       text,
     })
 
-  const renderSelector = () => (
-    <ModelGroupSelector
-      selectedModel={modelValue}
-      models={models}
-      onModelChange={onModelChange}
-      selectedGroup={groupValue}
-      groups={groups}
-      onGroupChange={onGroupChange}
-      disabled={isSelectorDisabled}
-    />
-  )
+  const renderSelector = () =>
+    hideGroup ? (
+      <ModelSelector
+        selectedModel={modelValue}
+        models={models}
+        onModelChange={onModelChange}
+        disabled={isSelectorDisabled}
+        className='min-h-11 min-w-11'
+      />
+    ) : (
+      <ModelGroupSelector
+        selectedModel={modelValue}
+        models={models}
+        onModelChange={onModelChange}
+        selectedGroup={groupValue}
+        groups={groups}
+        onGroupChange={onGroupChange}
+        disabled={isSelectorDisabled}
+      />
+    )
 
   const renderSubmitButton = () =>
     shouldShowStop ? (
@@ -93,7 +109,7 @@ export function PlaygroundInputControls({
     ) : (
       <PromptInputButton
         className='bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground h-8 px-3 font-medium shadow-sm'
-        disabled={!canSubmit}
+        disabled={!canSubmit || submitDisabled}
         type='submit'
         variant='default'
       >

@@ -1,22 +1,29 @@
 package openai
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/mowan/smartrouting"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func newResponsesChatTestContext(t *testing.T, body string, isStream bool) (*gin.Context, *httptest.ResponseRecorder, *http.Response, *relaycommon.RelayInfo) {
@@ -331,5 +338,155 @@ func requireOrderedSubstrings(t *testing.T, s string, parts ...string) {
 		idx := strings.Index(s[offset:], part)
 		require.NotEqualf(t, -1, idx, "missing %q after byte offset %d", part, offset)
 		offset += idx + len(part)
+	}
+}
+
+type routingCancelOnCloseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *routingCancelOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
+func TestConvertedSSEProviderFailureRetainsRoutingObservation(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	for _, tc := range []struct {
+		name      string
+		body      string
+		handler   func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError)
+		failure   bool
+		delivered bool
+	}{
+		{"buffered_failed", `{"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","code":"provider_custom","message":"provider failed"}}}`, OaiResponsesToChatBufferedStreamHandler, true, false},
+		{"buffered_error", `{"type":"response.error","response":{"status":"failed","error":{"type":"server_error","code":"provider_custom","message":"provider failed"}}}`, OaiResponsesToChatBufferedStreamHandler, true, false},
+		{"buffered_fallback", `{"type":"response.failed"}`, OaiResponsesToChatBufferedStreamHandler, true, false},
+		{"stream_failed", `{"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","code":"provider_custom","message":"provider failed"}}}`, OaiResponsesToChatStreamHandler, true, false},
+		{"stream_error", `{"type":"response.error"}`, OaiResponsesToChatStreamHandler, true, false},
+		{"chat_to_responses", `{"error":{"type":"server_error","code":"provider_custom","message":"provider failed"}}`, OaiChatToResponsesStreamHandler, true, false},
+		{"buffered_invalid_request", `{"type":"response.failed","response":{"error":{"type":"invalid_request_error","code":"provider_custom","message":"provider failed"}}}`, OaiResponsesToChatBufferedStreamHandler, false, false},
+		{"buffered_auth", `{"type":"response.failed","response":{"error":{"type":"authentication_error","code":"invalid_api_key","message":"provider failed"}}}`, OaiResponsesToChatBufferedStreamHandler, false, false},
+		{"buffered_quota", `{"type":"response.failed","response":{"error":{"type":"rate_limit_error","code":"insufficient_quota","message":"provider failed"}}}`, OaiResponsesToChatBufferedStreamHandler, false, false},
+		{"buffered_rate_limit", `{"type":"response.failed","response":{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"provider failed"}}}`, OaiResponsesToChatBufferedStreamHandler, true, false},
+		{"stream_invalid_request", `{"type":"response.failed","response":{"error":{"type":"invalid_request_error","code":"provider_custom","message":"provider failed"}}}`, OaiResponsesToChatStreamHandler, false, false},
+		{"stream_quota", `{"type":"response.failed","response":{"error":{"type":"rate_limit_error","code":"insufficient_quota","message":"provider failed"}}}`, OaiResponsesToChatStreamHandler, false, false},
+		{"stream_rate_limit", `{"type":"response.failed","response":{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"provider failed"}}}`, OaiResponsesToChatStreamHandler, true, false},
+		{"chat_invalid_request", `{"error":{"type":"invalid_request_error","code":"provider_custom","message":"provider failed"}}`, OaiChatToResponsesStreamHandler, false, false},
+		{"chat_permission", `{"error":{"type":"permission_error","code":"permission_denied","message":"provider failed"}}`, OaiChatToResponsesStreamHandler, false, false},
+		{"chat_quota", `{"error":{"type":"rate_limit_error","code":"insufficient_quota","message":"provider failed"}}`, OaiChatToResponsesStreamHandler, false, false},
+		{"chat_rate_limit", `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"provider failed"}}`, OaiChatToResponsesStreamHandler, true, false},
+		{"stream_delivered", strings.Join([]string{
+			`{"type":"response.output_text.delta","delta":"hello"}`,
+			`{"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","code":"provider_custom","message":"provider failed"},"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`,
+		}, "\n\ndata: "), OaiResponsesToChatStreamHandler, true, true},
+		{"chat_delivered", strings.Join([]string{
+			`{"id":"chat-1","model":"gpt-test","choices":[{"index":0,"delta":{"content":"hello"}}]}`,
+			`{"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`,
+			`{"error":{"type":"server_error","code":"provider_custom","message":"provider failed"}}`,
+		}, "\n\ndata: "), OaiChatToResponsesStreamHandler, true, true},
+		{"stream_invalid_delivered", strings.Join([]string{
+			`{"type":"response.output_text.delta","delta":"hello"}`,
+			`{"type":"response.failed","response":{"error":{"type":"invalid_request_error","code":"provider_custom","message":"provider failed"},"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`,
+		}, "\n\ndata: "), OaiResponsesToChatStreamHandler, false, true},
+		{"stream_quota_delivered", strings.Join([]string{
+			`{"type":"response.output_text.delta","delta":"hello"}`,
+			`{"type":"response.failed","response":{"error":{"type":"rate_limit_error","code":"insufficient_quota","message":"provider failed"},"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`,
+		}, "\n\ndata: "), OaiResponsesToChatStreamHandler, false, true},
+		{"stream_rate_limit_delivered", strings.Join([]string{
+			`{"type":"response.output_text.delta","delta":"hello"}`,
+			`{"type":"response.failed","response":{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"provider failed"},"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`,
+		}, "\n\ndata: "), OaiResponsesToChatStreamHandler, true, true},
+		{"chat_invalid_delivered", strings.Join([]string{
+			`{"id":"chat-1","model":"gpt-test","choices":[{"index":0,"delta":{"content":"hello"}}]}`,
+			`{"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`,
+			`{"error":{"type":"invalid_request_error","code":"provider_custom","message":"provider failed"}}`,
+		}, "\n\ndata: "), OaiChatToResponsesStreamHandler, false, true},
+		{"chat_quota_delivered", strings.Join([]string{
+			`{"id":"chat-1","model":"gpt-test","choices":[{"index":0,"delta":{"content":"hello"}}]}`,
+			`{"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`,
+			`{"error":{"type":"rate_limit_error","code":"insufficient_quota","message":"provider failed"}}`,
+		}, "\n\ndata: "), OaiChatToResponsesStreamHandler, false, true},
+		{"chat_rate_limit_delivered", strings.Join([]string{
+			`{"id":"chat-1","model":"gpt-test","choices":[{"index":0,"delta":{"content":"hello"}}]}`,
+			`{"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`,
+			`{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"provider failed"}}`,
+		}, "\n\ndata: "), OaiChatToResponsesStreamHandler, true, true},
+		{"buffered_parse_error", `{`, OaiResponsesToChatBufferedStreamHandler, false, false},
+		{"chat_parse_error", `{`, OaiChatToResponsesStreamHandler, false, false},
+	} {
+		for _, canceled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/canceled=%t", tc.name, canceled), func(t *testing.T) {
+				db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+				require.NoError(t, err)
+				sqlDB, err := db.DB()
+				require.NoError(t, err)
+				sqlDB.SetMaxOpenConns(1)
+				require.NoError(t, db.AutoMigrate(&model.Channel{}))
+				require.NoError(t, model.MigrateRoutingMetrics(db))
+				previousDB, previousType := model.DB, common.MainDatabaseType()
+				model.DB = db
+				common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+				t.Cleanup(func() {
+					assert.NoError(t, service.FlushRoutingMetrics(context.Background()))
+					model.DB = previousDB
+					common.SetMainDatabaseType(previousType)
+					require.NoError(t, sqlDB.Close())
+				})
+				channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Key: "fixture-key"}
+				require.NoError(t, db.Create(channel).Error)
+				c, _, resp, info := newResponsesChatTestContext(t, "data: "+tc.body+"\n\n", true)
+				c.Set(smartrouting.ContextKey, &model.TokenRouting{Mode: "smart"})
+				require.NoError(t, service.BindRoutingOrigin(c, "", "default", channel.Id))
+				p := service.RoutingPlanFor(c)
+				p.Model, p.Sent = "gpt-test", 1
+				c.Set("mowan_routing_send_claimed", true)
+				require.NoError(t, service.StartRoutingAttempt(c, "stream"))
+				ctx, cancel := context.WithCancel(c.Request.Context())
+				c.Request = c.Request.WithContext(ctx)
+				t.Cleanup(cancel)
+				if canceled && !tc.delivered {
+					resp.Body = &routingCancelOnCloseBody{ReadCloser: resp.Body, cancel: cancel}
+				}
+				usage, apiErr := tc.handler(c, info, resp)
+				if tc.delivered {
+					require.Nil(t, apiErr)
+					require.NotNil(t, usage)
+					require.Equal(t, 5, usage.TotalTokens)
+				} else {
+					require.NotNil(t, apiErr)
+					require.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+					if strings.Contains(tc.body, "provider_custom") {
+						require.Equal(t, types.ErrorCode("provider_custom"), apiErr.GetErrorCode())
+						require.Equal(t, "provider failed", apiErr.Error())
+					}
+				}
+				if canceled {
+					cancel()
+					require.ErrorIs(t, c.Request.Context().Err(), context.Canceled)
+				}
+				service.FinishRoutingSend(c, apiErr, false, 0)
+				service.FinishRoutingSend(c, apiErr, false, 0)
+				key, err := service.RoutingObservationKey(c, "gpt-test", "default", channel, "stream")
+				require.NoError(t, err)
+				view, err := (model.RoutingMetricsStore{DB: db}).ReadHealth(key, model.RoutingStageAttempt, 0, time.Time{})
+				require.NoError(t, err)
+				if tc.failure || (strings.Contains(tc.name, "parse_error") && !canceled) {
+					require.EqualValues(t, 1, view.Failures5m)
+				} else {
+					require.Zero(t, view.Failures5m)
+				}
+				require.Equal(t, view.Failures5m, view.Eligible5m)
+				if strings.Contains(tc.name, "rate_limit") {
+					require.EqualValues(t, 1, view.RateLimited60s)
+				} else {
+					require.Zero(t, view.RateLimited60s)
+				}
+			})
+		}
 	}
 }

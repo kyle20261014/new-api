@@ -23,15 +23,18 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
+import { SubmissionView } from '@/features/mowan/smart-routing/submission-view'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
-import type { TaskLog } from '../../types'
+import type { TaskRow } from '../../types'
 import { TaskDetailsDialog } from '../dialogs/task-details-dialog'
 import { PluginAuthorLink } from '../plugin-author-link'
 import { TaskArtifactsCell } from '../task-artifacts'
@@ -43,12 +46,29 @@ import {
 } from './column-helpers'
 
 function TaskDetailsCell(props: {
-  log: TaskLog
+  log: TaskRow
   isAdmin: boolean
   isRoot: boolean
 }) {
   const { t } = useTranslation()
   const [dialogOpen, setDialogOpen] = useState(false)
+
+  if (props.log.row_type === 'submission') {
+    return (
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        title={t('Submission record')}
+        trigger={
+          <Button type='button' variant='ghost' className='min-h-11'>
+            {t('View details')}
+          </Button>
+        }
+      >
+        <SubmissionView submission={props.log} />
+      </Dialog>
+    )
+  }
 
   return (
     <>
@@ -86,10 +106,10 @@ function TaskDetailsCell(props: {
 export function useTaskLogsColumns(
   isAdmin: boolean,
   isRoot: boolean
-): ColumnDef<TaskLog>[] {
+): ColumnDef<TaskRow>[] {
   const { t } = useTranslation()
   return useMemo(() => {
-    const columns: ColumnDef<TaskLog>[] = [
+    const columns: ColumnDef<TaskRow>[] = [
       {
         accessorKey: 'submit_time',
         header: t('Submit Time'),
@@ -118,7 +138,7 @@ export function useTaskLogsColumns(
 
     if (isAdmin) {
       columns.push(
-        createChannelColumn<TaskLog>({ headerLabel: t('Channel') }),
+        createChannelColumn<TaskRow>({ headerLabel: t('Channel') }),
         {
           id: 'user',
           header: t('User'),
@@ -138,6 +158,7 @@ export function useTaskLogsColumns(
                 className='flex items-center gap-1.5 text-left'
                 onClick={(e) => {
                   e.stopPropagation()
+                  if (!log.user_id) return
                   setSelectedUserId(log.user_id)
                   setUserInfoDialogOpen(true)
                 }}
@@ -204,6 +225,13 @@ export function useTaskLogsColumns(
         header: t('Task ID'),
         cell: ({ row }) => {
           const log = row.original
+          if (log.row_type === 'submission') {
+            return (
+              <span className='font-mono text-xs break-all'>
+                {log.submission_id}
+              </span>
+            )
+          }
           const taskId = row.getValue('task_id') as string
           if (!taskId) {
             return <span className='text-muted-foreground/60 text-xs'>-</span>
@@ -225,7 +253,7 @@ export function useTaskLogsColumns(
         },
         meta: { mobileTitle: true },
       },
-      createDurationColumn<TaskLog>({
+      createDurationColumn<TaskRow>({
         submitTimeKey: 'submit_time',
         finishTimeKey: 'finish_time',
         unit: 'seconds',
@@ -236,6 +264,17 @@ export function useTaskLogsColumns(
         accessorKey: 'status',
         header: t('Status'),
         cell: ({ row }) => {
+          if (row.original.row_type === 'submission') {
+            return (
+              <span className='text-xs'>
+                {t(
+                  row.original.submission_status === 'unknown'
+                    ? 'Submission outcome unknown'
+                    : 'Accepted'
+                )}
+              </span>
+            )
+          }
           const status = row.getValue('status') as string
           return (
             <StatusBadge
@@ -250,13 +289,25 @@ export function useTaskLogsColumns(
           )
         },
       },
-      createProgressColumn<TaskLog>({ headerLabel: t('Progress') }),
+      createProgressColumn<TaskRow>({ headerLabel: t('Progress') }),
+      {
+        id: 'submission',
+        header: t('Submission record'),
+        cell: ({ row }) => {
+          const submission =
+            row.original.row_type === 'submission'
+              ? row.original
+              : row.original.submission
+          return submission ? <SubmissionView submission={submission} /> : null
+        },
+      },
       {
         id: 'artifacts',
         header: t('Artifacts'),
-        cell: ({ row }) => (
-          <TaskArtifactsCell key={row.original.task_id} log={row.original} />
-        ),
+        cell: ({ row }) =>
+          row.original.row_type === 'submission' ? null : (
+            <TaskArtifactsCell key={row.original.task_id} log={row.original} />
+          ),
         size: 120,
         maxSize: 140,
       },
@@ -265,7 +316,11 @@ export function useTaskLogsColumns(
         header: t('Details'),
         cell: ({ row }) => (
           <TaskDetailsCell
-            key={row.original.task_id}
+            key={
+              row.original.row_type === 'submission'
+                ? row.original.submission_id
+                : row.original.task_id
+            }
             log={row.original}
             isAdmin={isAdmin}
             isRoot={isRoot}

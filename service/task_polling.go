@@ -99,7 +99,13 @@ func sweepTimedOutTasks(ctx context.Context) {
 			task.FailReason = reason
 		}
 
-		won, err := task.UpdateWithStatus(oldStatus)
+		var won bool
+		var err error
+		if isLegacy {
+			won, err = task.UpdateWithStatusAndQuota(ctx, oldStatus)
+		} else {
+			won, err = task.UpdateWithStatus(oldStatus)
+		}
 		if err != nil {
 			logger.LogError(ctx, common.LogText("sweepTimedOutTasks CAS update error for task %s: %v", task.TaskID, err))
 			continue
@@ -340,6 +346,14 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			}
 			continue
 		}
+		reasonIsFailure := responseItem.TaskInfo.Reason != ""
+		if reasonIsFailure && parsedStatus != model.TaskStatusFailure {
+			journaled, err := hasRoutingTaskSubmission(ctx, task)
+			if err != nil {
+				return err
+			}
+			reasonIsFailure = !journaled
+		}
 		if isNonTerminalPollStatus(parsedStatus) {
 			task.PrivateData.PollFailures = 0
 		}
@@ -354,7 +368,7 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 		if responseItem.TaskInfo.Progress != "" {
 			task.Progress = responseItem.TaskInfo.Progress
 		}
-		if responseItem.TaskInfo.Reason != "" || task.Status == model.TaskStatusFailure {
+		if reasonIsFailure || task.Status == model.TaskStatusFailure {
 			logger.LogInfo(ctx, common.LogText("%s failed: %s", task.TaskID, task.FailReason))
 			task.Status = model.TaskStatusFailure
 			task.Progress = "100%"
@@ -376,7 +390,13 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 
 		isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 		terminalTransition := isDone && snap.Status != task.Status
-		won, updateErr := task.UpdateWithStatus(snap.Status)
+		var won bool
+		var updateErr error
+		if terminalTransition && (parsedStatus == model.TaskStatusSuccess || parsedStatus == model.TaskStatusFailure) && task.Status == parsedStatus {
+			won, updateErr = task.UpdateWithUpstreamStatus(ctx, snap.Status)
+		} else {
+			won, updateErr = task.UpdateWithStatus(snap.Status)
+		}
 		if updateErr != nil {
 			common.SysLog(common.LogText("UpdateSunoTask task error: %s", updateErr.Error()))
 			continue
@@ -613,7 +633,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone && snap.Status != task.Status {
-		won, err := task.UpdateWithStatus(snap.Status)
+		won, err := task.UpdateWithUpstreamStatus(ctx, snap.Status)
 		if err != nil {
 			logger.LogError(ctx, common.LogText("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
 			shouldFinalizeBilling = false
@@ -641,7 +661,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	perfmetrics.RecordTaskResult(task, taskResult)
 	billingSettled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
-	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
+	if task.Status == model.TaskStatusSuccess && !billingSettled {
+		RecalculateTaskQuota(ctx, task, task.Quota, common.NewMessage("Retained the pre-consumed quota"))
+	}
+	if task.Status == model.TaskStatusFailure && !billingSettled {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
 }
@@ -818,7 +841,26 @@ func recordPollFailureForTasks(ctx context.Context, adaptor TaskPollingAdaptor, 
 	return firstErr
 }
 
+func hasRoutingTaskSubmission(ctx context.Context, task *model.Task) (bool, error) {
+	var submissions int64
+	if err := model.DB.WithContext(ctx).Model(&model.RoutingSubmission{}).
+		Where("local_task_id = ? AND user_id = ?", task.ID, task.UserId).
+		Where("local_task_kind IS NULL OR local_task_kind IN ?", []string{"", "task"}).Count(&submissions).Error; err != nil {
+		return false, fmt.Errorf("task %s submission lookup failed: %w", task.TaskID, err)
+	}
+	return submissions > 0, nil
+}
+
 func failTaskFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, fromStatus model.TaskStatus, reason string) error {
+	journaled, err := hasRoutingTaskSubmission(ctx, task)
+	if err != nil {
+		return err
+	}
+	if journaled {
+		// Query failures cannot end a durable task or prevent its next provider poll.
+		_, err := task.UpdateWithStatus(fromStatus)
+		return err
+	}
 	now := time.Now().Unix()
 	task.Status = model.TaskStatusFailure
 	task.Progress = taskcommon.ProgressComplete

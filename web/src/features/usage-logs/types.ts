@@ -322,6 +322,8 @@ export interface MidjourneyLog {
 // ============================================================================
 
 export interface TaskLog {
+  row_type?: 'task'
+  submission?: import('@/features/mowan/smart-routing/types').RoutingSubmission
   id: number
   user_id: number
   username?: string
@@ -361,6 +363,14 @@ export interface TaskLog {
   created_at?: number
   updated_at?: number
 }
+
+export type SubmissionLog =
+  import('@/features/mowan/smart-routing/types').RoutingSubmission &
+    Partial<Omit<TaskLog, 'task_id' | 'row_type'>> & {
+      row_type: 'submission'
+      task_id: null
+    }
+export type TaskRow = TaskLog | SubmissionLog
 
 export interface TaskPluginInfo {
   key: string
@@ -445,7 +455,7 @@ export interface GetLogsResponse {
   success: boolean
   message?: string
   data?: {
-    items: UsageLog[] | MidjourneyLog[] | TaskLog[]
+    items: UsageLog[] | MidjourneyLog[] | TaskRow[]
     total: number
     page: number
     page_size: number
@@ -489,6 +499,7 @@ export interface GetMidjourneyLogsParams {
 // ============================================================================
 
 export interface GetTaskLogsParams {
+  submission_id?: string
   p?: number
   page_size?: number
   channel_id?: string

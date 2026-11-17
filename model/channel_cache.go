@@ -120,9 +120,19 @@ func GetRandomSatisfiedChannel(
 	retry int,
 	filters []dto.ChannelFilter,
 ) (*Channel, error) {
+	return getRandomSatisfiedChannel(group, model, retry, filters, nil)
+}
+
+// GetRandomSatisfiedChannelExcluding exhausts physical channels without changing
+// the legacy priority and weight algorithms.
+func GetRandomSatisfiedChannelExcluding(group, model string, filters []dto.ChannelFilter, excluded map[int]bool) (*Channel, error) {
+	return getRandomSatisfiedChannel(group, model, 0, filters, excluded)
+}
+
+func getRandomSatisfiedChannel(group, model string, retry int, filters []dto.ChannelFilter, excluded map[int]bool) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, filters)
+		return getChannelExcluding(group, model, retry, filters, excluded)
 	}
 
 	channelSyncLock.RLock()
@@ -130,11 +140,28 @@ func GetRandomSatisfiedChannel(
 
 	// First, try to find channels with the exact model name.
 	channels, _ := filterCandidateIDs(group2model2channels[group][model], model, filters)
+	if excluded != nil && group != "all" {
+		all, _ := filterCandidateIDs(group2model2channels["all"][model], model, filters)
+		channels = appendUniqueChannelIDs(channels, all)
+	}
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.RoutingMatchModelName(model)
 		channels, _ = filterCandidateIDs(group2model2channels[group][normalizedModel], model, filters)
+		if excluded != nil && group != "all" {
+			all, _ := filterCandidateIDs(group2model2channels["all"][normalizedModel], model, filters)
+			channels = appendUniqueChannelIDs(channels, all)
+		}
+	}
+	if len(excluded) > 0 {
+		remaining := make([]int, 0, len(channels))
+		for _, id := range channels {
+			if !excluded[id] {
+				remaining = append(remaining, id)
+			}
+		}
+		channels = remaining
 	}
 
 	if len(channels) == 0 {
@@ -214,6 +241,21 @@ func GetRandomSatisfiedChannel(
 	}
 	// return null if no channel is not found
 	return nil, errors.New("channel not found")
+}
+
+func appendUniqueChannelIDs(ids, extra []int) []int {
+	result := append([]int(nil), ids...)
+	seen := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		seen[id] = true
+	}
+	for _, id := range extra {
+		if !seen[id] {
+			result = append(result, id)
+			seen[id] = true
+		}
+	}
+	return result
 }
 
 func CacheGetChannel(id int) (*Channel, error) {

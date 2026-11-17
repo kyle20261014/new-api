@@ -225,7 +225,7 @@ func ValidateUserToken(key string) (token *Token, err error) {
 	if key == "" {
 		return nil, ErrTokenNotProvided
 	}
-	token, err = GetTokenByKey(key, false)
+	token, err = GetTokenByKey(key, FundingDBOnly())
 	if err == nil {
 		if token.Status == common.TokenStatusExhausted ||
 			token.Status == common.TokenStatusExpired ||
@@ -291,7 +291,7 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 		// Don't return error - fall through to DB
 	}
 	token = &Token{}
-	if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
+	if err = DB.Where(map[string]any{"key": key}).First(token).Error; err != nil {
 		return nil, err
 	}
 	if common.RedisEnabled {
@@ -305,18 +305,22 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 }
 
 func (token *Token) Insert() error {
-	var err error
-	err = DB.Create(token).Error
-	return err
+	return token.InsertTx(DB)
 }
+
+func (token *Token) InsertTx(tx *gorm.DB) error { return tx.Create(token).Error }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update() (err error) {
+	return token.UpdateTx(DB)
+}
+
+func (token *Token) UpdateTx(tx *gorm.DB) error {
 	// 写库前失效缓存并设置 fence，防止并发读者把过期快照重新写回缓存。
 	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 		common.SysLog(common.LogText("failed to invalidate token cache before update: %s", cacheErr.Error()))
 	}
-	return DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+	return tx.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
 		"allow_user_quota_query").Updates(token).Error
 }
@@ -333,7 +337,16 @@ func (token *Token) Delete() (err error) {
 	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 		common.SysLog(common.LogText("failed to invalidate token cache before delete: %s", cacheErr.Error()))
 	}
-	return DB.Delete(token).Error
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var locked Token
+		if err := lockForUpdate(tx).First(&locked, "id = ? AND user_id = ?", token.Id, token.UserId).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("token_id = ?", token.Id).Delete(&TokenRouting{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&locked).Error
+	})
 }
 
 func (token *Token) IsModelLimitsEnabled() bool {
@@ -383,6 +396,9 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
+	if FundingDBOnly() {
+		return increaseTokenQuota(tokenId, quota)
+	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
 			// 守卫式增量：哈希不存在时跳过，由下次读取从数据库水合，
@@ -413,6 +429,9 @@ func increaseTokenQuota(id int, quota int) (err error) {
 func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
+	}
+	if FundingDBOnly() {
+		return decreaseTokenQuota(id, quota)
 	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
@@ -455,12 +474,22 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 	tx := DB.Begin()
 
 	var tokens []Token
-	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Find(&tokens).Error; err != nil {
+	if err := lockForUpdate(tx).Where("user_id = ? AND id IN (?)", userId, ids).Order("id").Find(&tokens).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}
 	if err := invalidateTokensCache(tokens); err != nil {
 		common.SysLog(common.LogText("failed to invalidate token cache before batch delete: %s", err.Error()))
+	}
+	ownedIDs := make([]int, 0, len(tokens))
+	for _, token := range tokens {
+		ownedIDs = append(ownedIDs, token.Id)
+	}
+	if len(ownedIDs) > 0 {
+		if err := tx.Where("token_id IN ?", ownedIDs).Delete(&TokenRouting{}).Error; err != nil {
+			tx.Rollback()
+			return 0, err
+		}
 	}
 
 	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Delete(&Token{}).Error; err != nil {

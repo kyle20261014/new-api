@@ -284,6 +284,7 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 			if getStatus(idx) == common.ChannelStatusEnabled {
 				// update polling index for next call (point to the next position)
 				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
+				channelInfo.MultiKeyPollingIndex = channel.ChannelInfo.MultiKeyPollingIndex
 				return keys[idx], idx, nil
 			}
 		}

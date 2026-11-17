@@ -110,6 +110,7 @@ func migrateTokenControllerTestDB(t *testing.T, db *gorm.DB) {
 	if err := db.AutoMigrate(&model.Token{}); err != nil {
 		t.Fatalf("failed to migrate token table: %v", err)
 	}
+	require.NoError(t, model.MigrateTokenRouting(db))
 }
 
 func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
@@ -117,6 +118,8 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 
 	db := openTokenControllerTestDB(t)
 	migrateTokenControllerTestDB(t, db)
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "token-test-owner", Password: "placeholder", Group: "default", Status: common.UserStatusEnabled, AffCode: "token-test-owner"}).Error)
 	return db
 }
 
@@ -149,14 +152,15 @@ func openTokenControllerExternalDB(t *testing.T, dialect string, dsn string) (*g
 	model.DB = db
 	model.LOG_DB = db
 
-	if db.Migrator().HasTable("tokens") {
-		t.Skipf("refusing to run %s migration compatibility test against external database because tokens table already exists", dialect)
+	if db.Migrator().HasTable("tokens") || db.Migrator().HasTable(&model.TokenRouting{}) {
+		t.Skipf("refusing to run %s migration compatibility test against external database because token tables already exist", dialect)
 	}
 
 	managedTokensTable := new(bool)
 
 	t.Cleanup(func() {
 		if *managedTokensTable && db.Migrator().HasTable("tokens") {
+			_ = db.Migrator().DropTable(&model.TokenRouting{})
 			_ = db.Migrator().DropTable("tokens")
 		}
 		sqlDB, err := db.DB()
@@ -736,7 +740,9 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 				db, _ := newAuditTestDatabase(t, database.name, dsn)
 				model.DB = db
 				common.SetDatabaseTypes(database.typ, database.typ)
-				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}))
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}, &model.Option{}))
+				require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
+				require.NoError(t, model.MigrateTokenRouting(db))
 				// Initialize production column quoting as well as the existing audit table.
 				require.NoError(t, model.InitLogDB())
 				if separateLog {
@@ -775,7 +781,7 @@ func verifyAPITokenAudit(t *testing.T) {
 	require.NoError(t, err)
 	router := gin.New()
 	router.Use(middleware.RequestId(), middleware.AccessTokenAudit())
-	tokenRoutes := router.Group("/api/token", middleware.UserAuth(), middleware.TokenOperationAudit())
+	tokenRoutes := router.Group("/api/token", middleware.TokenOperationAudit(), middleware.UserAuth())
 	tokenRoutes.POST("/", AddToken)
 	tokenRoutes.PUT("/", UpdateToken)
 	tokenRoutes.DELETE("/:id", DeleteToken)
@@ -869,6 +875,9 @@ func verifyAPITokenAudit(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
+			if tc.usePAT {
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			}
 			if strings.Contains(tc.name, "exceeds audit buffer") {
 				assert.Greater(t, response.Body.Len(), 64*1024)
 			}
@@ -896,7 +905,11 @@ func verifyAPITokenAudit(t *testing.T) {
 			if tc.rateLimit {
 				assert.Equal(t, 429, response.Code)
 			} else {
-				assert.Equal(t, 200, response.Code)
+				status := http.StatusOK
+				if tc.failWrite {
+					status = http.StatusServiceUnavailable
+				}
+				assert.Equal(t, status, response.Code)
 				assert.Equal(t, tc.success, decodeAPIResponse(t, response).Success)
 			}
 			assert.Equal(t, user.Id, operation.UserId)
@@ -977,7 +990,7 @@ func verifyAPITokenAudit(t *testing.T) {
 		}
 	})
 
-	t.Run("reads and unauthenticated writes add no operation audit", func(t *testing.T) {
+	t.Run("reads stay unaudited and unauthenticated writes are audited", func(t *testing.T) {
 		for _, tc := range []struct{ method, path, credential string }{
 			{"GET", "/api/token/", jwt}, {"GET", "/api/token/search?keyword=private-search", jwt},
 			{"GET", "/api/token/999999", jwt}, {"POST", "/api/token/", ""},
@@ -985,7 +998,11 @@ func verifyAPITokenAudit(t *testing.T) {
 			response := auditRequest(router, tc.method, tc.path, tc.credential)
 			var count int64
 			require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("request_id = ?", response.Header().Get(common.RequestIdKey)).Count(&count).Error)
-			assert.Zero(t, count)
+			if tc.method == "GET" {
+				assert.Zero(t, count)
+			} else {
+				assert.EqualValues(t, 1, count)
+			}
 		}
 	})
 

@@ -24,6 +24,7 @@ import { useForm, type SubmitErrorHandler } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { CopyButton } from '@/components/copy-button'
 import { DateTimePicker } from '@/components/datetime-picker'
 import {
   SideDrawerSection,
@@ -62,6 +63,7 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { RoutingControl } from '@/features/mowan/smart-routing/routing-control'
 import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
 import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups } from '@/lib/api'
@@ -70,6 +72,8 @@ import { handleServerError } from '@/lib/handle-server-error'
 import {
   requireServerSuccess,
   translateServerText,
+  getServerErrorStatus,
+  getServerErrorMessage,
 } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -113,6 +117,9 @@ export function ApiKeysMutateDrawer({
   const { status, loading: statusLoading } = useStatus()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [loadedKey, setLoadedKey] = useState<ApiKey | undefined>()
+  const [conflict, setConflict] = useState(false)
+  const [reviewedKey, setReviewedKey] = useState<ApiKey | undefined>()
   const [initializedTarget, setInitializedTarget] = useState<string | null>(
     null
   )
@@ -196,8 +203,8 @@ export function ApiKeysMutateDrawer({
       ? Number(autoGroupsData?.data?.max_count)
       : 5
   const schema = useMemo(
-    () => getApiKeyFormSchema(t, maxAutoGroups),
-    [t, maxAutoGroups]
+    () => getApiKeyFormSchema(t, maxAutoGroups, loadedKey),
+    [t, maxAutoGroups, loadedKey]
   )
 
   const form = useForm<ApiKeyFormValues>({
@@ -212,6 +219,9 @@ export function ApiKeysMutateDrawer({
         getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
       )
       setInitializedTarget(null)
+      setLoadedKey(undefined)
+      setConflict(false)
+      setReviewedKey(undefined)
       return
     }
     if (
@@ -229,6 +239,7 @@ export function ApiKeysMutateDrawer({
     if (initializedTarget === target) return
     if (isUpdate && currentRow) {
       if (apiKeyData?.success && apiKeyData.data) {
+        setLoadedKey(apiKeyData.data)
         form.reset(
           transformApiKeyToFormDefaults(
             apiKeyData.data,
@@ -268,35 +279,19 @@ export function ApiKeysMutateDrawer({
     isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
   const isFormInitialized = initializedTarget === formTarget
   const selectedGroup = form.watch('group')
-
-  // Correct group after groups load: if the form value is not in available groups, fall back
-  useEffect(() => {
-    if (groups.length === 0) return
-    const currentGroup = selectedGroup
-    if (currentGroup && !groups.some((g) => g.value === currentGroup)) {
-      const fallback =
-        groups.find((g) => g.value === 'default')?.value ??
-        groups[0]?.value ??
-        ''
-      form.setValue('group', fallback)
-      if (currentGroup === 'auto') {
-        form.setValue('auto_groups', [])
-        form.setValue('auto_groups_mode', 'inherit')
-        form.setValue('cross_group_retry', false)
-      }
-    }
-  }, [groups, form, selectedGroup])
+  const routing = form.watch('routing') ?? null
 
   const onSubmit = async (data: ApiKeyFormValues) => {
     setIsSubmitting(true)
     try {
-      const basePayload = transformFormDataToPayload(data)
+      const basePayload = transformFormDataToPayload(data, loadedKey)
 
       if (isUpdate && currentRow) {
         const result = await updateApiKey({
           ...basePayload,
           id: currentRow.id,
         })
+        requireServerSuccess(result)
         if (result.success) {
           toast.success(t(SUCCESS_MESSAGES.API_KEY_UPDATED))
           onOpenChange(false)
@@ -336,6 +331,18 @@ export function ApiKeysMutateDrawer({
         }
       }
     } catch (error) {
+      if (getServerErrorStatus(error) === 409) {
+        setConflict(true)
+        form.setError('routing', {
+          message: t(
+            'Routing changed elsewhere. Your draft is preserved. Review the latest version before retrying.'
+          ),
+        })
+        return
+      }
+      form.setError('routing', {
+        message: getServerErrorMessage(error, t(ERROR_MESSAGES.UNEXPECTED)),
+      })
       handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setIsSubmitting(false)
@@ -416,35 +423,187 @@ export function ApiKeysMutateDrawer({
 
               <FormField
                 control={form.control}
-                name='group'
+                name='routing'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Group')}</FormLabel>
-                    <FormControl>
-                      <ApiKeyGroupCombobox
-                        options={groups}
-                        value={field.value}
-                        onValueChange={(group) => {
-                          field.onChange(group)
-                          if (group === 'auto') {
-                            form.setValue('cross_group_retry', true, {
-                              shouldDirty: true,
-                            })
-                            return
-                          }
-                          form.setValue('cross_group_retry', false, {
-                            shouldDirty: true,
-                          })
-                        }}
-                        placeholder={t('Select a group')}
-                      />
-                    </FormControl>
+                    <RoutingControl
+                      value={field.value ?? null}
+                      onChange={field.onChange}
+                      groups={availableAutoGroupNames}
+                      legacyGroup={selectedGroup}
+                      tokenId={currentRowId}
+                    />
                     <FormMessage />
                   </FormItem>
                 )}
               />
+              {conflict && (
+                <div
+                  role='alert'
+                  className='space-y-3 rounded-lg border p-3 text-sm'
+                >
+                  <p>
+                    {t(
+                      'Routing changed elsewhere. Your draft is preserved. Review the latest version before retrying.'
+                    )}
+                  </p>
+                  <CopyButton
+                    value={JSON.stringify(form.getValues('routing'), null, 2)}
+                    aria-label={t('Copy routing draft')}
+                    size='default'
+                    className='min-h-11'
+                  >
+                    {t('Copy routing draft')}
+                  </CopyButton>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    className='min-h-11'
+                    onClick={async () => {
+                      try {
+                        const result = requireServerSuccess(
+                          await getApiKey(currentRowId ?? 0)
+                        )
+                        if (result.data) setReviewedKey(result.data)
+                      } catch (error) {
+                        handleServerError(error)
+                      }
+                    }}
+                  >
+                    {t('Review latest policy')}
+                  </Button>
+                  {reviewedKey && (
+                    <>
+                      <pre className='max-h-48 overflow-auto text-xs break-all whitespace-pre-wrap'>
+                        {JSON.stringify(
+                          {
+                            version: reviewedKey.routing_version ?? 0,
+                            routing: reviewedKey.routing ?? null,
+                            allow_routing_self_write:
+                              reviewedKey.allow_routing_self_write ?? false,
+                          },
+                          null,
+                          2
+                        )}
+                      </pre>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        className='min-h-11'
+                        onClick={() => {
+                          setLoadedKey((original) =>
+                            original
+                              ? {
+                                  ...original,
+                                  routing: reviewedKey.routing,
+                                  routing_version: reviewedKey.routing_version,
+                                  allow_routing_self_write:
+                                    reviewedKey.allow_routing_self_write,
+                                }
+                              : reviewedKey
+                          )
+                          setConflict(false)
+                          form.clearErrors('routing')
+                        }}
+                      >
+                        {t('Use reviewed version for this draft')}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
+              <FormField
+                control={form.control}
+                name='allow_routing_self_write'
+                render={({ field }) => (
+                  <FormItem className={sideDrawerSwitchItemClassName()}>
+                    <div>
+                      <FormLabel>
+                        {t('Allow key to edit its routing')}
+                      </FormLabel>
+                      <FormDescription>
+                        {t(
+                          'Off by default. This key may read its policy via GET /api/mowan/smart-routing/self. When enabled, PUT with expected_version and routing changes only this key’s routing within existing permissions. Quota, IP, model limits and this switch cannot be changed by the key.'
+                        )}
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={!!field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
 
-              {selectedGroup === 'auto' && (
+              {!routing && (
+                <FormField
+                  control={form.control}
+                  name='group'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Group')}</FormLabel>
+                      <FormControl>
+                        <ApiKeyGroupCombobox
+                          options={
+                            groups.some(
+                              (group) => group.value === selectedGroup
+                            )
+                              ? groups
+                              : [
+                                  {
+                                    value: selectedGroup ?? '',
+                                    label:
+                                      selectedGroup || t('Inherited group'),
+                                    desc: t(
+                                      'Stored value · preserved until changed'
+                                    ),
+                                  },
+                                  ...groups,
+                                ]
+                          }
+                          value={field.value}
+                          onValueChange={(group) => {
+                            field.onChange(group)
+                            if (group === 'auto') {
+                              form.setValue('cross_group_retry', true, {
+                                shouldDirty: true,
+                              })
+                              return
+                            }
+                            form.setValue('cross_group_retry', false, {
+                              shouldDirty: true,
+                            })
+                          }}
+                          placeholder={t('Select a group')}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+              {!routing && loadedKey && (
+                <details className='rounded-lg border p-3 text-xs'>
+                  <summary className='min-h-11 cursor-pointer'>
+                    {t('Original legacy routing values')}
+                  </summary>
+                  <pre className='overflow-auto break-all whitespace-pre-wrap'>
+                    {JSON.stringify(
+                      {
+                        group: loadedKey.group,
+                        auto_groups: loadedKey.auto_groups,
+                        cross_group_retry: loadedKey.cross_group_retry,
+                      },
+                      null,
+                      2
+                    )}
+                  </pre>
+                </details>
+              )}
+
+              {!routing && selectedGroup === 'auto' && (
                 <FormField
                   control={form.control}
                   name='auto_groups'
@@ -485,7 +644,7 @@ export function ApiKeysMutateDrawer({
                 />
               )}
 
-              {selectedGroup === 'auto' && (
+              {!routing && selectedGroup === 'auto' && (
                 <FormField
                   control={form.control}
                   name='cross_group_retry'

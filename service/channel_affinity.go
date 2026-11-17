@@ -11,6 +11,7 @@ import (
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -33,6 +34,8 @@ const (
 )
 
 var (
+	smartAffinityOnce        sync.Once
+	smartAffinityCache       *cachex.HybridCache[routingBinding]
 	channelAffinityCacheOnce sync.Once
 	channelAffinityCache     *cachex.HybridCache[int]
 
@@ -41,6 +44,19 @@ var (
 
 	channelAffinityRegexCache sync.Map // map[string]*regexp.Regexp
 )
+
+func getSmartAffinityCache() *cachex.HybridCache[routingBinding] {
+	smartAffinityOnce.Do(func() {
+		smartAffinityCache = cachex.NewHybridCache[routingBinding](cachex.HybridCacheConfig[routingBinding]{
+			Namespace: cachex.Namespace("mowan:smart_affinity:v1"), Redis: common.RDB,
+			RedisEnabled: func() bool { return common.RedisEnabled && common.RDB != nil }, RedisCodec: cachex.JSONCodec[routingBinding]{},
+			Memory: func() *hot.HotCache[string, routingBinding] {
+				return hot.NewHotCache[string, routingBinding](hot.LRU, 100000).WithTTL(time.Hour).WithJanitor().Build()
+			},
+		})
+	})
+	return smartAffinityCache
+}
 
 type channelAffinityMeta struct {
 	CacheKey       string
@@ -593,7 +609,13 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 			ttlSeconds = setting.DefaultTTLSeconds
 		}
 		cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, modelName, usingGroup, affinityValue)
+		if IsSmartRouting(c) {
+			cacheKeySuffix = strconv.Itoa(c.GetInt("id")) + ":" + strconv.Itoa(c.GetInt("token_id")) + ":" + affinityFingerprint(modelName) + ":" + cacheKeySuffix
+		}
 		cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
+		if IsSmartRouting(c) {
+			cacheKeyFull = cacheKeySuffix
+		}
 		state.SessionMode, state.SessionModeSource = EffectiveSessionMode(setting, rule)
 		state.RuleName = rule.Name
 		setChannelAffinityContext(c, channelAffinityMeta{
@@ -614,6 +636,18 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 
 		state.AddEvent(PolicyEvent{Decision: PolicyDecision{Action: "match", Reason: "session_rule_matched", Source: "session_rule"}})
 		if state.SessionMode == "off" {
+			return 0, false
+		}
+		if IsSmartRouting(c) {
+			binding, found, err := getSmartAffinityCache().Get(cacheKeySuffix)
+			if err != nil {
+				common.SysError(common.LogText("smart affinity read failed: %v", err))
+				return 0, false
+			}
+			if found {
+				RoutingPlanFor(c).Binding = binding
+				return binding.ChannelID, true
+			}
 			return 0, false
 		}
 		cache := getChannelAffinityCache()
@@ -654,6 +688,18 @@ func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 	}
 	cacheKey, _, ok := getChannelAffinityContext(c)
 	if !ok || cacheKey == "" {
+		return false
+	}
+	if IsSmartRouting(c) {
+		deleted, err := getSmartAffinityCache().DeleteMany([]string{cacheKey})
+		if err != nil {
+			return false
+		}
+		for _, ok := range deleted {
+			if ok {
+				return true
+			}
+		}
 		return false
 	}
 
@@ -751,6 +797,20 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 	}
 	if ttlSeconds <= 0 {
 		ttlSeconds = 3600
+	}
+	if IsSmartRouting(c) {
+		p := RoutingPlanFor(c)
+		if setting.SwitchOnSuccess && !RequestPolicy(c).Successful {
+			return
+		}
+		binding := routingBinding{Group: common.GetContextKeyString(c, constant.ContextKeyUsingGroup), ChannelID: channelID}
+		if !setting.SwitchOnSuccess {
+			binding = p.FirstSelected
+		}
+		if err := getSmartAffinityCache().SetWithTTL(cacheKey, binding, time.Duration(ttlSeconds)*time.Second); err != nil {
+			common.SysError(common.LogText("smart affinity write failed: %v", err))
+		}
+		return
 	}
 	cache := getChannelAffinityCache()
 	if err := cache.SetWithTTL(cacheKey, channelID, time.Duration(ttlSeconds)*time.Second); err != nil {

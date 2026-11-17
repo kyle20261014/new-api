@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -86,6 +88,15 @@ func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp) {
 }
 
 func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) error {
+	return PreWssConsumeQuotaEvent(ctx, relayInfo, usage, "")
+}
+
+// A real provider event identity enables durable replay; the legacy entry only
+// promises an atomic balance change. Equal-cost frames must remain distinct.
+func PreWssConsumeQuotaEvent(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage, eventID string) error {
+	if ctx == nil || ctx.Request == nil || relayInfo == nil || usage == nil || len(eventID) > 4096 {
+		return errors.New("realtime funding context unavailable")
+	}
 	if relayInfo.UsePrice {
 		return nil
 	}
@@ -146,7 +157,18 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
 	}
 
-	err = PostConsumeQuota(relayInfo, quota, 0, false)
+	opID := ""
+	if eventID != "" {
+		requestID := common.GetContextKeyString(ctx, common.RequestIdKey)
+		if requestID == "" {
+			requestID = relayInfo.RequestId
+		}
+		if requestID == "" {
+			return errors.New("realtime server request identity unavailable")
+		}
+		opID = fmt.Sprintf("realtime:%x", sha256.Sum256([]byte(requestID+"\x00"+eventID)))
+	}
+	_, err = postConsumeFundingDelta(ctx.Request.Context(), relayInfo, quota, opID, true)
 	if err != nil {
 		return err
 	}
@@ -428,6 +450,7 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 type postConsumeQuotaResult struct {
 	FundingApplied bool
 	TokenApplied   bool
+	Replay         bool
 }
 
 func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) error {
@@ -436,42 +459,9 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 }
 
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
-
-	// 1) Consume from wallet quota OR subscription item
-	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
-		if relayInfo.SubscriptionId == 0 {
-			return result, errors.New("subscription id is missing")
-		}
-		delta := int64(quota)
-		if delta != 0 {
-			if err := model.PostConsumeUserSubscriptionDelta(relayInfo.SubscriptionId, delta); err != nil {
-				return result, err
-			}
-			relayInfo.SubscriptionPostDelta += delta
-		}
-	} else {
-		// Wallet
-		if quota > 0 {
-			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
-		} else {
-			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
-		}
-		if err != nil {
-			return result, err
-		}
-	}
-	result.FundingApplied = true
-
-	if !relayInfo.IsPlayground {
-		if quota > 0 {
-			err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota)
-		} else {
-			err = model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, -quota)
-		}
-		if err != nil {
-			return result, err
-		}
-		result.TokenApplied = true
+	result, err = postConsumeFundingDelta(context.Background(), relayInfo, quota, "", false)
+	if err != nil {
+		return result, err
 	}
 
 	if sendEmail {
@@ -481,6 +471,29 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 	}
 
 	return result, nil
+}
+
+func postConsumeFundingDelta(ctx context.Context, info *relaycommon.RelayInfo, quota int, operationID string, requireAvailable bool) (postConsumeQuotaResult, error) {
+	var result postConsumeQuotaResult
+	if info == nil {
+		return result, errors.New("funding relay info unavailable")
+	}
+	source := BillingSourceWallet
+	if info.BillingSource == BillingSourceSubscription {
+		source = BillingSourceSubscription
+	}
+	tokenID := info.TokenId
+	if info.IsPlayground {
+		tokenID = 0
+	}
+	op, err := model.ApplyRoutingFundingDeltaContext(ctx, model.RoutingFundingDeltaRequest{OperationID: operationID, UserID: info.UserId, TokenID: tokenID, SubscriptionID: info.SubscriptionId, Source: source, Delta: quota, RequireAvailable: requireAvailable})
+	if err != nil {
+		return result, err
+	}
+	if !op.Replay && source == BillingSourceSubscription {
+		info.SubscriptionPostDelta += int64(quota)
+	}
+	return postConsumeQuotaResult{FundingApplied: true, TokenApplied: !info.IsPlayground, Replay: op.Replay}, nil
 }
 
 func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int) {

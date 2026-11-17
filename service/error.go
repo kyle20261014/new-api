@@ -84,7 +84,32 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
 	return claudeErr
 }
 
+type routingUpstreamResponseError struct {
+	error
+	statusCode int
+}
+
+func (e *routingUpstreamResponseError) Unwrap() error { return e.error }
+
+// MarkRoutingUpstreamResponse records an observed response without changing the
+// protocol error. Status rewrites must not erase the original upstream fact.
+func MarkRoutingUpstreamResponse(apiErr *types.NewAPIError) *types.NewAPIError {
+	if apiErr == nil {
+		return nil
+	}
+	var fact *routingUpstreamResponseError
+	if !errors.As(apiErr, &fact) {
+		cause := apiErr.Err
+		if cause == nil {
+			cause = errors.New(apiErr.Error())
+		}
+		apiErr.Err = &routingUpstreamResponseError{error: cause, statusCode: apiErr.StatusCode}
+	}
+	return apiErr
+}
+
 func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
+	defer func() { MarkRoutingUpstreamResponse(newApiErr) }()
 	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 
 	responseBody, err := io.ReadAll(resp.Body)

@@ -1119,9 +1119,10 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     expect(duplicateChips[0]).toHaveAttribute('tabIndex', '-1')
     expect(duplicateChips[0]).toHaveAttribute('aria-hidden', 'true')
 
-    // Duplicate chips have onClick working and show feedback status
+    // Duplicate chips open the same model experience as the visible chips.
     fireEvent.click(duplicateChips[0])
-    expect(await screen.findByRole('status')).toBeInTheDocument()
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
   })
 
   test('validates particle-scene lifecycle, 3-layer Points generation, shader stages, hidden pause, and disposal', () => {

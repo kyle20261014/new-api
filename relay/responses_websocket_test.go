@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	appdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/mowan/smartrouting"
 	"github.com/QuantumNous/new-api/model"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -39,6 +40,13 @@ func normalizeResponsesWSTestMessage(message []byte) (responsesWSCreateRequest, 
 	}
 	create, err := normalizeResponsesWSCreateEvent(message, envelope, streamID)
 	return create, envelope.EventID, err
+}
+
+func TestNormalizeResponsesWSRejectsPlaygroundRoutingOverrides(t *testing.T) {
+	for _, body := range []string{`{"type":"response.create","model":"m","mowan_routing":null}`, `{"type":"response.create","mowan_routing":{},"response":{"model":"m"}}`, `{"type":"response.create","response":{"model":"m","mowan_routing":{}}}`} {
+		_, _, err := normalizeResponsesWSTestMessage([]byte(body))
+		require.ErrorContains(t, err, "only supported by the playground")
+	}
 }
 
 func TestNormalizeResponsesWSMaxOutputTokens(t *testing.T) {
@@ -770,6 +778,48 @@ func TestResponsesWSErrorAttribution(t *testing.T) {
 			assert.Equal(t, tc.terminal, terminal)
 			assert.Equal(t, tc.ambiguous, ambiguous)
 			assert.Equal(t, tc.controlError, controlError)
+		})
+	}
+}
+
+func TestResponsesWSProviderRejectionRetainsFailureAfterCancel(t *testing.T) {
+	for _, status := range []int{429, 500} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			db := setupRelayChannelDB(t)
+			require.NoError(t, model.MigrateRoutingMetrics(db))
+			channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Key: "test-key"}
+			require.NoError(t, db.Create(channel).Error)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+			c.Set(smartrouting.ContextKey, &model.TokenRouting{Mode: "smart"})
+			c.Set("mowan_responses_ws", true)
+			require.NoError(t, service.BindRoutingOrigin(c, "", "default", channel.Id))
+			p := service.RoutingPlanFor(c)
+			p.Model, p.Sent = "ws-model", 1
+			c.Set("mowan_routing_send_claimed", true)
+			require.NoError(t, service.StartRoutingAttempt(c, "responses_ws"))
+			var rejection responsesWSErrorEvent
+			require.NoError(t, common.Unmarshal([]byte(fmt.Sprintf(`{"type":"error","status":%d,"error":{"type":"server_error","code":"provider_custom_busy","message":"busy"}}`, status)), &rejection))
+			apiErr := responsesWSUpstreamRejection(rejection)
+			require.Equal(t, status, apiErr.StatusCode)
+			require.Equal(t, types.ErrorCode("provider_custom_busy"), apiErr.GetErrorCode())
+			require.Equal(t, types.ErrorTypeOpenAIError, apiErr.GetErrorType())
+			require.Equal(t, "busy", apiErr.Error())
+			ctx, cancel := context.WithCancel(c.Request.Context())
+			cancel()
+			c.Request = c.Request.WithContext(ctx)
+			service.FinishRoutingSend(c, apiErr, false, 0)
+			k, err := service.RoutingObservationKey(c, "ws-model", "default", channel, "responses_ws")
+			require.NoError(t, err)
+			view, err := (model.RoutingMetricsStore{DB: db}).ReadHealth(k, model.RoutingStageAttempt, 0, time.Time{})
+			require.NoError(t, err)
+			require.EqualValues(t, 1, view.Failures5m)
+			if status == 429 {
+				require.EqualValues(t, 1, view.RateLimited60s)
+			} else {
+				require.Zero(t, view.RateLimited60s)
+			}
+			require.NoError(t, service.FlushRoutingMetrics(context.Background()))
 		})
 	}
 }

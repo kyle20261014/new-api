@@ -16,6 +16,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type tokenAutoGroupsInput struct {
@@ -36,12 +38,19 @@ type tokenRequest struct {
 	model.Token
 	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
-	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
+	AllowUserQuotaQuery    *bool             `json:"allow_user_quota_query"`
+	Routing                common.RawMessage `json:"routing"`
+	ExpectedRoutingVersion *int64            `json:"expected_routing_version"`
+	AllowRoutingSelfWrite  *bool             `json:"allow_routing_self_write"`
+	fields                 map[string]common.RawMessage
 }
 
 type tokenResponse struct {
 	*model.Token
-	AutoGroups []string `json:"auto_groups"`
+	AutoGroups            []string          `json:"auto_groups"`
+	Routing               common.RawMessage `json:"routing"`
+	RoutingVersion        int64             `json:"routing_version"`
+	AllowRoutingSelfWrite bool              `json:"allow_routing_self_write"`
 }
 
 func maxTokenQuota() int {
@@ -63,9 +72,6 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	autoGroups, err := token.GetAutoGroups()
 	if err != nil {
 		common.SysError(common.LogText("failed to parse auto groups for token %d: %v", token.Id, err))
-		autoGroups = nil
-	}
-	if len(autoGroups) == 0 {
 		autoGroups = nil
 	}
 	return &tokenResponse{Token: &maskedToken, AutoGroups: autoGroups}
@@ -139,7 +145,12 @@ func GetAllTokens(c *gin.Context) {
 	}
 	total, _ := model.CountUserTokens(userId)
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	responses, err := loadMaskedTokenResponses(model.DB, tokens)
+	if err != nil {
+		tokenRoutingError(c, err)
+		return
+	}
+	pageInfo.SetItems(responses)
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -156,7 +167,12 @@ func SearchTokens(c *gin.Context) {
 		return
 	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	responses, err := loadMaskedTokenResponses(model.DB, tokens)
+	if err != nil {
+		tokenRoutingError(c, err)
+		return
+	}
+	pageInfo.SetItems(responses)
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -172,7 +188,12 @@ func GetToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildMaskedTokenResponse(token))
+	response, err := loadMaskedTokenResponse(model.DB, token)
+	if err != nil {
+		tokenRoutingError(c, err)
+		return
+	}
+	common.ApiSuccess(c, response)
 }
 
 func GetTokenAutoGroups(c *gin.Context) {
@@ -300,10 +321,15 @@ func AddToken(c *gin.Context) {
 	request := tokenRequest{}
 	err := c.ShouldBindJSON(&request)
 	if err != nil {
-		common.ApiError(c, err)
+		tokenRequestError(c, err)
 		return
 	}
 	token := request.Token
+	policy, restoreLegacy, writeRouting, err := request.routingChange(true)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
 	if len(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
 		return
@@ -364,9 +390,27 @@ func AddToken(c *gin.Context) {
 		AutoGroups:         token.AutoGroups,
 	}
 	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
-	err = cleanToken.Insert()
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
+		var owner model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&owner, "id = ?", cleanToken.UserId).Error; err != nil {
+			return err
+		}
+		if err := validateTokenRoutingPolicy(owner.Group, tx, &cleanToken, policy, nil, true); err != nil {
+			return err
+		}
+		if err := cleanToken.InsertTx(tx); err != nil {
+			return err
+		}
+		if writeRouting {
+			_, err := model.SaveTokenRoutingTx(tx, &cleanToken, policy, 0, request.AllowRoutingSelfWrite, false, false, restoreLegacy)
+			return err
+		}
+		// A missing routing table is a service error even for explicit legacy creation.
+		_, err := model.GetTokenRouting(tx, cleanToken.Id)
+		return err
+	})
 	if err != nil {
-		common.ApiError(c, err)
+		tokenRoutingError(c, err)
 		return
 	}
 	params["id"] = cleanToken.Id
@@ -405,10 +449,19 @@ func UpdateToken(c *gin.Context) {
 	request := tokenRequest{}
 	err := c.ShouldBindJSON(&request)
 	if err != nil {
-		common.ApiError(c, err)
+		tokenRequestError(c, err)
 		return
 	}
 	token := request.Token
+	policy, restoreLegacy, writeRouting, err := request.routingChange(false)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
+	if statusOnly != "" && writeRouting {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Status-only update cannot change routing"))
+		return
+	}
 	params := tokenAuditParams(c)
 	if token.Id > 0 {
 		params["id"] = token.Id
@@ -448,20 +501,8 @@ func UpdateToken(c *gin.Context) {
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
-		// If you add more fields, please also update token.Update()
-		cleanToken.Name = token.Name
-		cleanToken.ExpiredTime = token.ExpiredTime
-		cleanToken.RemainQuota = token.RemainQuota
-		cleanToken.UnlimitedQuota = token.UnlimitedQuota
-		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
-		cleanToken.ModelLimits = token.ModelLimits
-		cleanToken.AllowIps = token.AllowIps
-		if request.AllowUserQuotaQuery != nil {
-			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
-		}
-		cleanToken.Group = token.Group
-		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if token.Group != "auto" {
+		request.applyFields(cleanToken)
+		if request.hasLegacyRouting() && cleanToken.Group != "auto" {
 			cleanToken.CrossGroupRetry = false
 			_ = cleanToken.SetAutoGroups(nil)
 		} else if request.AutoGroups.Set {
@@ -470,12 +511,63 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update()
+	var response *tokenResponse
+	var previousAllowSelfWrite bool
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
+		var owner model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&owner, "id = ?", userId).Error; err != nil {
+			return err
+		}
+		var current model.Token
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ? AND user_id = ?", token.Id, userId).Error; err != nil {
+			return err
+		}
+		previous = current
+		if statusOnly != "" {
+			current.Status = token.Status
+		} else {
+			request.applyFields(&current)
+			if request.hasLegacyRouting() && current.Group != "auto" {
+				current.AutoGroups, current.CrossGroupRetry = "", false
+			} else if request.AutoGroups.Set {
+				current.AutoGroups = cleanToken.AutoGroups
+			}
+		}
+		cleanToken = &current
+		row, err := model.GetTokenRouting(tx, cleanToken.Id)
+		if err != nil {
+			return err
+		}
+		previousAllowSelfWrite = row != nil && row.AllowSelfWrite
+		if statusOnly == "" && row != nil && row.Mode != "legacy" && request.hasLegacyRouting() {
+			return common.NewMessage("Legacy routing fields conflict with saved routing")
+		}
+		if restoreLegacy && (row == nil || row.LegacySnapshot == "") {
+			return common.NewMessage("routing_legacy_snapshot_unavailable")
+		}
+		if err := validateTokenRoutingPolicy(owner.Group, tx, cleanToken, policy, row, false); err != nil {
+			return err
+		}
+		if writeRouting {
+			row, err = model.SaveTokenRoutingTx(tx, cleanToken, policy, *request.ExpectedRoutingVersion, request.AllowRoutingSelfWrite, false, true, restoreLegacy)
+			if err != nil {
+				return err
+			}
+		}
+		if err := cleanToken.UpdateTx(tx); err != nil {
+			return err
+		}
+		response, err = loadMaskedTokenResponse(tx, cleanToken)
+		return err
+	})
 	if err != nil {
-		common.ApiError(c, err)
+		tokenRoutingError(c, err)
 		return
 	}
 	params["name"] = cleanToken.Name
+	if writeRouting {
+		params["routing_version_from"], params["routing_version_to"] = *request.ExpectedRoutingVersion, response.RoutingVersion
+	}
 	if statusOnly != "" {
 		params["from"], params["to"] = previous.Status, cleanToken.Status
 	} else {
@@ -496,6 +588,9 @@ func UpdateToken(c *gin.Context) {
 			{"group", previous.Group != cleanToken.Group},
 			{"cross_group_retry", previous.CrossGroupRetry != cleanToken.CrossGroupRetry},
 			{"auto_groups", previous.AutoGroups != cleanToken.AutoGroups},
+			{"routing", request.has("routing")},
+			{"routing_version", writeRouting},
+			{"allow_routing_self_write", previousAllowSelfWrite != response.AllowRoutingSelfWrite},
 		} {
 			if field.changed {
 				changedFields = append(changedFields, field.name)
@@ -507,7 +602,7 @@ func UpdateToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    buildMaskedTokenResponse(cleanToken),
+		"data":    response,
 	})
 }
 

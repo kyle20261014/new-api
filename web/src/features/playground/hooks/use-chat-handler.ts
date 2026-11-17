@@ -19,6 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  getSubmissionReference,
+  type SubmissionReference,
+} from '@/features/mowan/smart-routing/submission-reference'
+import type { RoutingPolicy } from '@/features/mowan/smart-routing/types'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { sendChatCompletion } from '../api'
@@ -42,6 +47,7 @@ interface UseChatHandlerOptions {
   config: PlaygroundConfig
   parameterEnabled: ParameterEnabled
   onMessageUpdate: (updater: (prev: Message[]) => Message[]) => void
+  routing?: RoutingPolicy
 }
 
 const KNOWN_ERROR_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES))
@@ -71,6 +77,7 @@ export function useChatHandler({
   config,
   parameterEnabled,
   onMessageUpdate,
+  routing,
 }: UseChatHandlerOptions) {
   const { t } = useTranslation()
   const { sendStreamRequest, stopStream, isStreaming } = useStreamRequest()
@@ -221,7 +228,12 @@ export function useChatHandler({
 
   // Handle stream error
   const handleStreamError = useCallback(
-    (generation: number, error: string, errorCode?: string) => {
+    (
+      generation: number,
+      error: string,
+      errorCode?: string,
+      submission?: SubmissionReference
+    ) => {
       if (generation !== requestGenerationRef.current) return
       flushStreamUpdates(generation)
       setIsRequesting(false)
@@ -234,7 +246,8 @@ export function useChatHandler({
           prev,
           displayError,
           errorCode,
-          errorTitle
+          errorTitle,
+          submission
         )
       })
     },
@@ -253,18 +266,21 @@ export function useChatHandler({
       const payload = buildChatCompletionPayload(
         messages,
         config,
-        parameterEnabled
+        parameterEnabled,
+        routing
       )
       void sendStreamRequest(
         payload,
         (type, chunk) => handleStreamUpdate(generation, type, chunk),
         () => handleStreamComplete(generation),
-        (error, errorCode) => handleStreamError(generation, error, errorCode)
+        (error, errorCode, submission) =>
+          handleStreamError(generation, error, errorCode, submission)
       )
     },
     [
       config,
       parameterEnabled,
+      routing,
       sendStreamRequest,
       discardPendingStreamUpdates,
       handleStreamUpdate,
@@ -279,7 +295,8 @@ export function useChatHandler({
       const payload = buildChatCompletionPayload(
         messages,
         config,
-        parameterEnabled
+        parameterEnabled,
+        routing
       )
       const generation = requestGenerationRef.current + 1
       const abortController = new AbortController()
@@ -304,7 +321,12 @@ export function useChatHandler({
         }
 
         if (!hasChatCompletionChoice(response)) {
-          handleStreamError(generation, ERROR_MESSAGES.API_REQUEST_ERROR)
+          handleStreamError(
+            generation,
+            ERROR_MESSAGES.API_REQUEST_ERROR,
+            undefined,
+            getSubmissionReference(response)
+          )
           return
         }
 
@@ -327,8 +349,9 @@ export function useChatHandler({
           return
         }
 
-        const { errorCode, errorMessage } = parseRequestErrorDetails(error)
-        handleStreamError(generation, errorMessage, errorCode)
+        const { errorCode, errorMessage, submission } =
+          parseRequestErrorDetails(error)
+        handleStreamError(generation, errorMessage, errorCode, submission)
       } finally {
         if (requestGenerationRef.current === generation) {
           abortControllerRef.current = null
@@ -339,6 +362,7 @@ export function useChatHandler({
     [
       config,
       parameterEnabled,
+      routing,
       stopStream,
       discardPendingStreamUpdates,
       onMessageUpdate,

@@ -476,7 +476,13 @@ func TestPrepareTieredBillingForSelectedGroupTopUpArrearsAllowsNegativeBalance(t
 		relayInfo:        relayInfo,
 		funding:          &WalletFunding{userId: userID, consumed: 50_000},
 		preConsumedQuota: 50_000,
+		fundingID:        "test-tiered-debt",
 	}
+	require.NoError(t, model.DB.Create(&model.RoutingFundingSession{FundingID: session.fundingID, UserID: userID, Source: "wallet", Quota: 50_000, Status: "reserved"}).Error)
+	t.Cleanup(func() {
+		model.DB.Where("funding_id = ?", session.fundingID).Delete(&model.RoutingFundingSession{})
+		model.DB.Where("funding_id = ?", session.fundingID).Delete(&model.RoutingFundingOperation{})
+	})
 	relayInfo.Billing = session
 
 	require.Nil(t, PrepareTieredBillingForSelectedGroup(nil, relayInfo))
@@ -511,7 +517,13 @@ func TestBillingSessionReserveWalletTopUpDecrementsBalance(t *testing.T) {
 		relayInfo:        relayInfo,
 		funding:          &WalletFunding{userId: userID, consumed: 50_000},
 		preConsumedQuota: 50_000,
+		fundingID:        "test-tiered-topup",
 	}
+	require.NoError(t, model.DB.Create(&model.RoutingFundingSession{FundingID: session.fundingID, UserID: userID, Source: "wallet", Quota: 50_000, Status: "reserved"}).Error)
+	t.Cleanup(func() {
+		model.DB.Where("funding_id = ?", session.fundingID).Delete(&model.RoutingFundingSession{})
+		model.DB.Where("funding_id = ?", session.fundingID).Delete(&model.RoutingFundingOperation{})
+	})
 
 	require.NoError(t, session.Reserve(100_000))
 
@@ -1174,5 +1186,64 @@ func TestSamePriceCacheReadsRemainInInput(t *testing.T) {
 			assert.Equal(t, previousCost, cost, "folding cache reads into input must preserve the charge")
 			assert.Equal(t, separateParams.Len, params.Len, "tier conditions keep the full context length")
 		})
+	}
+}
+
+func TestSmartFinalQuoteCannotSendWithoutWalletKeyOrSubscriptionReserve(t *testing.T) {
+	for _, mode := range []string{"ordinary", "per-call", "tiered"} {
+		for _, source := range []string{"wallet", "key", "subscription", "free-to-paid"} {
+			t.Run(mode+"/"+source, func(t *testing.T) {
+				truncate(t)
+				wallet, keyQuota, initial := 200, 200, 10
+				if source == "wallet" {
+					wallet = 15
+				}
+				if source == "key" {
+					keyQuota = 15
+				}
+				if source == "free-to-paid" {
+					wallet, initial = 15, 0
+				}
+				seedUser(t, 910, wallet)
+				seedToken(t, 910, 910, "sk-final-quote", keyQuota)
+				info := &relaycommon.RelayInfo{UserId: 910, TokenId: 910, TokenKey: "sk-final-quote", OriginModelName: "test-model", UsingGroup: "expensive", UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}, PriceData: types.PriceData{FreeModel: initial == 0, QuotaToPreConsume: initial, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1}}}
+				if source == "subscription" {
+					plan := model.SubscriptionPlan{Title: "final quote", TotalAmount: 15, QuotaResetPeriod: model.SubscriptionResetNever}
+					require.NoError(t, model.DB.Create(&plan).Error)
+					seedSubscription(t, 910, 910, 15, 0)
+					require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", 910).Update("plan_id", plan.Id).Error)
+					info.UserSetting.BillingPreference = "subscription_only"
+				}
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+				c.Set(routingPlanKey, &RoutingPlan{RequestID: "final-quote-" + mode + "-" + source})
+				require.Nil(t, PreConsumeBilling(c, initial, info))
+				if mode == "tiered" {
+					info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: `tier("frozen",p)`, ExprHash: billingexpr.ExprHashString(`tier("frozen",p)`), GroupRatio: float64(initial) / 100, EstimatedQuotaBeforeGroup: 100, EstimatedQuotaAfterGroup: initial}
+				}
+				callbackCalls := 0
+				apiErr := PrepareTieredBillingForSelectedGroup(c, info, func() error {
+					callbackCalls++
+					info.PriceData.QuotaToPreConsume = 100
+					info.PriceData.UsePrice = mode == "per-call"
+					return nil
+				})
+				require.NotNil(t, apiErr, "no transport may follow an unfunded final quote")
+				require.Equal(t, initial, info.Billing.GetPreConsumedQuota())
+				require.Equal(t, keyQuota-initial, getTokenRemainQuota(t, 910))
+				if source == "subscription" {
+					require.Equal(t, wallet, getUserQuota(t, 910))
+					require.EqualValues(t, initial, getSubscriptionUsed(t, 910))
+				} else {
+					require.Equal(t, wallet-initial, getUserQuota(t, 910))
+				}
+				if mode == "tiered" {
+					require.Zero(t, callbackCalls)
+					require.Equal(t, `tier("frozen",p)`, info.TieredBillingSnapshot.ExprString)
+				} else {
+					require.Equal(t, 1, callbackCalls)
+				}
+			})
+		}
 	}
 }

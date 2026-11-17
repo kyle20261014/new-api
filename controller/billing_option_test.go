@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/internal/mowan/smartrouting"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -254,17 +255,19 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 				wallet, token         int
 				force, unlimited      bool
 				wantHeld              int
+				smart                 bool
 			}{
-				{"above threshold", 10, 1, 5500000, 5500000, false, false, 0},
-				{"custom threshold", 20, 1, 5500000, 5500000, false, false, 1500},
-				{"zero disables bypass", 0, 1, 5500000, 5500000, false, false, 1500},
-				{"wallet equals threshold", 10, 1, 5000000, 5500000, false, false, 1500},
-				{"token equals threshold", 10, 1, 5500000, 5000000, false, false, 1500},
-				{"fractional threshold", 10.5, 1, 5250001, 5250001, false, false, 0},
-				{"unlimited token", 10, 1, 5500000, 0, false, true, 0},
-				{"forced reservation", 10, 1, 5500000, 5500000, true, false, 1500},
-				{"half input cost", 0, 0.5, 100000, 100000, false, false, 750},
-				{"fractional multiple refunds excess", 0, 2.5, 100000, 100000, false, false, 3750},
+				{"above threshold", 10, 1, 5500000, 5500000, false, false, 0, false},
+				{"custom threshold", 20, 1, 5500000, 5500000, false, false, 1500, false},
+				{"zero disables bypass", 0, 1, 5500000, 5500000, false, false, 1500, false},
+				{"wallet equals threshold", 10, 1, 5000000, 5500000, false, false, 1500, false},
+				{"token equals threshold", 10, 1, 5500000, 5000000, false, false, 1500, false},
+				{"fractional threshold", 10.5, 1, 5250001, 5250001, false, false, 0, false},
+				{"unlimited token", 10, 1, 5500000, 0, false, true, 0, false},
+				{"forced reservation", 10, 1, 5500000, 5500000, true, false, 1500, false},
+				{"half input cost", 0, 0.5, 100000, 100000, false, false, 750, false},
+				{"fractional multiple refunds excess", 0, 2.5, 100000, 100000, false, false, 3750, false},
+				{"smart requires reservation above trust threshold", 10, 1, 5500000, 5500000, false, false, 1500, true},
 			}
 			for i, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
@@ -276,7 +279,10 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 					require.NoError(t, db.Create(&token).Error)
 					ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 					ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-					ctx.Set("token_quota", tc.token)
+					ctx.Set("token_quota", common.MaxQuota) // A stale display/cache balance must not grant trust.
+					if tc.smart {
+						ctx.Set(smartrouting.ContextKey, &model.TokenRouting{Mode: "smart"})
+					}
 					info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, TokenUnlimited: tc.unlimited, ForcePreConsume: tc.force, OriginModelName: "policy-model", UserGroup: "default", UsingGroup: "default", BillingRequestInput: &billingexpr.RequestInput{}}
 					info.UserSetting.BillingPreference = "wallet_only"
 					price, err := helper.ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{MaxTokens: 10000})
@@ -288,6 +294,25 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 					if !tc.unlimited {
 						require.NoError(t, db.First(&token, token.Id).Error)
 						assert.Equal(t, tc.token-tc.wantHeld, token.RemainQuota)
+					}
+					var fund model.RoutingFundingSession
+					require.NoError(t, db.First(&fund, "user_id = ?", user.Id).Error)
+					assert.Equal(t, tc.wantHeld, fund.Quota, "even trusted zero holds must be durable")
+					if tc.wantHeld == 0 {
+						session := info.Billing.(*service.BillingSession)
+						require.Nil(t, service.PrepareTieredBillingForSelectedGroup(ctx, info))
+						assert.Zero(t, info.FinalPreConsumedQuota, "legacy group repricing must preserve trust")
+						require.NoError(t, db.First(&user, user.Id).Error)
+						assert.Equal(t, tc.wallet, user.Quota)
+						require.NoError(t, session.ReserveBeforeSubmit(1500))
+						require.NoError(t, session.ReserveBeforeSubmit(1500))
+						assert.Equal(t, 1500, info.FinalPreConsumedQuota)
+						require.NoError(t, db.First(&user, user.Id).Error)
+						assert.Equal(t, tc.wallet-1500, user.Quota)
+						if !tc.unlimited {
+							require.NoError(t, db.First(&token, token.Id).Error)
+							assert.Equal(t, tc.token-1500, token.RemainQuota)
+						}
 					}
 					_, actual, _ := service.TryTieredSettle(info, billingexpr.TokenParams{P: 1000, C: 100, Len: 1000})
 					assert.Equal(t, 2250, actual)

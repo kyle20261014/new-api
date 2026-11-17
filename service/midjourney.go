@@ -30,6 +30,113 @@ func CovertMjpActionToModelName(mjAction string) string {
 	return modelName
 }
 
+// PrepareMidjourneySubmissionBilling reserves both balances before every create,
+// including no-consumption actions. Midjourney retains its wallet-only product.
+func PrepareMidjourneySubmissionBilling(c *gin.Context, info *relaycommon.RelayInfo, quota int) error {
+	if info == nil {
+		return errors.New("relay info is nil")
+	}
+	if info.BillingSource == BillingSourceSubscription || common.NormalizeBillingPreference(info.UserSetting.BillingPreference) == "subscription_only" {
+		return errors.New("legacy Midjourney billing does not support subscriptions")
+	}
+	info.ForcePreConsume = true
+	if _, err := PrepareRoutingProbeClaims(c); err != nil {
+		return err
+	}
+	if err := prepareRoutingSubmission(c, info, true); err != nil {
+		return err
+	}
+	pref := info.UserSetting.BillingPreference
+	info.UserSetting.BillingPreference = "wallet_only"
+	apiErr := PreConsumeBilling(c, quota, info)
+	info.UserSetting.BillingPreference = pref
+	if apiErr != nil {
+		ReleaseRoutingUnusedProbes(c)
+		return apiErr
+	}
+	return nil
+}
+
+// FailMidjourneySubmission distinguishes a proven pre-send failure from a
+// transport ambiguity after the durable sending claim.
+// Only recovery identity/state is public; transport and DB causes may contain private data.
+func FailMidjourneySubmission(c *gin.Context, info *relaycommon.RelayInfo, _ error) error {
+	s := CurrentRoutingSubmission(c)
+	if s == nil {
+		return errors.New("Midjourney submission failed")
+	}
+	state := "unknown"
+	if s.State == "prepared" {
+		state = "not_sent"
+	}
+	if s.State == "prepared" || s.State == "sending" {
+		updated, err := model.RecordRoutingSubmissionOutcome(s.SubmissionID, s.Version, state, "", nil, s.SendOwnerID)
+		if err != nil {
+			return fmt.Errorf("submission_id=%s state=%s outcome_save_pending", s.SubmissionID, state)
+		}
+		c.Set("mowan_routing_submission", updated)
+	}
+	if state == "not_sent" {
+		info.Billing.Refund(c)
+	} else {
+		MarkRoutingBarrier(c, "submission_unknown")
+	}
+	return fmt.Errorf("submission_id=%s state=%s", s.SubmissionID, state)
+}
+
+func PersistMidjourneySubmission(c *gin.Context, info *relaycommon.RelayInfo, task *model.Midjourney, accepted bool) (bool, error) {
+	s := CurrentRoutingSubmission(c)
+	if s == nil || task == nil {
+		return false, errors.New("Midjourney submission unavailable")
+	}
+	if !accepted {
+		if task.Code == 0 || task.Code == 1 || task.Code == 21 || task.Code == 22 {
+			return false, FailMidjourneySubmission(c, info, errors.New("Midjourney submission outcome ambiguous"))
+		}
+		updated, err := model.RecordRoutingSubmissionOutcome(s.SubmissionID, s.Version, "rejected", "", nil, s.SendOwnerID)
+		if err != nil {
+			return false, fmt.Errorf("submission_id=%s state=rejected outcome_save_pending", s.SubmissionID)
+		}
+		c.Set("mowan_routing_submission", updated)
+		info.Billing.Refund(c)
+		task.Quota, task.TokenId, task.BillingChannelId = 0, 0, 0
+		if err := task.Insert(); err != nil {
+			return false, fmt.Errorf("submission_id=%s state=rejected local_save_pending", s.SubmissionID)
+		}
+		return false, nil
+	}
+	if task.MjId == "" {
+		return false, FailMidjourneySubmission(c, info, errors.New("accepted Midjourney identity missing"))
+	}
+	safe := *task
+	safe.Id = 0
+	safe.Prompt, safe.PromptEn, safe.Description, safe.State, safe.Properties, safe.Buttons = "", "", "", "", "", ""
+	updated, err := model.RecordRoutingSubmissionOutcome(s.SubmissionID, s.Version, "accepted", task.MjId, &model.RoutingTaskRecovery{Midjourney: &safe}, s.SendOwnerID)
+	if err != nil {
+		return false, FailMidjourneySubmission(c, info, err)
+	}
+	c.Set("mowan_routing_submission", updated)
+	persisted, err := model.PersistAcceptedRoutingMidjourney(s.SubmissionID)
+	if err != nil {
+		return false, fmt.Errorf("submission_id=%s state=accepted local_save_pending", s.SubmissionID)
+	}
+	persisted.Prompt, persisted.PromptEn, persisted.Description = task.Prompt, task.PromptEn, task.Description
+	persisted.State, persisted.Properties, persisted.Buttons = task.State, task.Properties, task.Buttons
+	if err := model.DB.Model(persisted).Select("prompt", "prompt_en", "description", "state", "properties", "buttons").Updates(persisted).Error; err != nil {
+		return false, fmt.Errorf("submission_id=%s state=accepted local_save_pending", s.SubmissionID)
+	}
+	*task = *persisted
+	if err := info.Billing.Settle(task.Quota); err != nil {
+		return false, fmt.Errorf("submission_id=%s state=accepted funding_pending", s.SubmissionID)
+	}
+	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
+		if _, err := model.FinalizeMidjourneyFunding(task, task.Status == model.TaskStatusFailure); err != nil {
+			return false, fmt.Errorf("submission_id=%s state=accepted terminal_funding_pending", s.SubmissionID)
+		}
+	}
+	return task.Quota > 0, nil
+}
+
 // PrepareMidjourneyTaskBilling sets the durable refund marker before the task is inserted.
 func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.Midjourney, quota int, shouldBill bool) (bool, error) {
 	if task == nil {
@@ -99,19 +206,15 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		return true
 	}
 
-	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
+	op, err := model.FinalizeMidjourneyFunding(task, true)
+	if err != nil {
 		logger.LogWarn(ctx, common.LogText("failed to refund Midjourney user quota, task %s: %s", task.MjId, err.Error()))
 		return false
 	}
-
-	if task.TokenId > 0 {
-		tokenKey := resolveTokenKey(ctx, task.TokenId, task.MjId)
-		if tokenKey != "" {
-			if err := model.IncreaseTokenQuota(task.TokenId, tokenKey, quota); err != nil {
-				logger.LogWarn(ctx, common.LogText("failed to refund Midjourney token quota, task %s: %s", task.MjId, err.Error()))
-			}
-		}
+	if op.Replay {
+		return true
 	}
+	quota = -op.Delta
 
 	billingChannelId := task.GetBillingChannelId()
 	model.UpdateUserUsedQuota(task.UserId, -quota)
@@ -129,10 +232,6 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		Other:     other,
 	})
 
-	task.Quota = 0
-	if err := task.UpdateBillingState(); err != nil {
-		logger.LogError(ctx, common.LogText("Midjourney refund succeeded but clearing the quota failed, task %s: %s", task.MjId, err.Error()))
-	}
 	return true
 }
 
@@ -275,10 +374,27 @@ func ConvertSimpleChangeParams(content string) *dto.MidjourneyRequest {
 // HTTP 200 responses. Submissions are single-attempt: an ambiguous transport
 // failure must never create a duplicate task on another channel.
 func RecordMidjourneyPolicyResponse(c *gin.Context, response *dto.MidjourneyResponseWithStatusCode, requestErr error) bool {
+	responseKnown := response != nil && requestErr == nil
 	if response == nil {
 		response = MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "empty_response", http.StatusBadGateway)
 	}
+	upstreamStatus := response.StatusCode
+	var fact *routingUpstreamResponseError
+	if errors.As(requestErr, &fact) {
+		upstreamStatus, responseKnown = fact.statusCode, true
+	}
 	accepted := requestErr == nil && response.StatusCode == http.StatusOK && (response.Response.Code == 1 || response.Response.Code == 21 || response.Response.Code == 22)
+	observation := RoutingAttemptResult{Outcome: "ignored", RateLimited: responseKnown && upstreamStatus == http.StatusTooManyRequests}
+	clientCanceled := errors.Is(requestErr, context.Canceled) || (c.Request != nil && c.Request.Context().Err() != nil)
+	if accepted {
+		MarkRoutingBarrier(c, "submission_accepted")
+		observation.Outcome = "success"
+	} else if (responseKnown && (upstreamStatus >= 500 || observation.RateLimited)) || (requestErr != nil && !clientCanceled) {
+		observation.Outcome = "failure"
+	}
+	if err := FinishRoutingAttempt(c, observation); err != nil {
+		logger.LogWarn(c, common.LogText("Midjourney submit observation pending: %s", err.Error()))
+	}
 	if accepted {
 		properties, _ := response.Response.Properties.(map[string]any)
 		if properties["status"] != "FAILURE" {
@@ -296,7 +412,7 @@ func RecordMidjourneyPolicyResponse(c *gin.Context, response *dto.MidjourneyResp
 	return false
 }
 
-func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestURL string) (*dto.MidjourneyResponseWithStatusCode, []byte, error) {
+func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestURL string) (response *dto.MidjourneyResponseWithStatusCode, body []byte, requestErr error) {
 	var nullBytes []byte
 	//var requestBody io.Reader
 	//requestBody = c.Request.Body
@@ -345,12 +461,34 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 		req.Header.Set("mj-api-secret", auth)
 	}
 	defer cancel()
+	if c.Request.Method != http.MethodGet {
+		if err := BeginRoutingTransportSend(c); err != nil {
+			return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "routing_before_send_failed", http.StatusForbidden), nullBytes, err
+		}
+		if err := StartRoutingAttempt(c, "async"); err != nil {
+			return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "routing_observation_start_failed", http.StatusServiceUnavailable), nullBytes, err
+		}
+		if !IsSmartRouting(c) {
+			if submission := CurrentRoutingSubmission(c); submission != nil {
+				updated, err := model.MarkRoutingSubmissionSending(submission.SubmissionID, submission.Version, submission.SendOwnerID)
+				if err != nil {
+					return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "routing_before_send_failed", http.StatusForbidden), nullBytes, err
+				}
+				c.Set("mowan_routing_submission", updated)
+			}
+		}
+	}
 	resp, err := GetHttpClient().Do(req)
 	if err != nil {
 		common.SysLog(common.LogText("do request failed: %s", err.Error()))
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "do_request_failed", http.StatusInternalServerError), nullBytes, err
 	}
 	statusCode := resp.StatusCode
+	defer func() {
+		if requestErr != nil {
+			requestErr = &routingUpstreamResponseError{error: requestErr, statusCode: statusCode}
+		}
+	}()
 	//if statusCode != 200  {
 	//	return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "bad_response_status_code", statusCode), nullBytes, nil
 	//}

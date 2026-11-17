@@ -26,7 +26,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { RoutingPolicy } from '@/features/mowan/smart-routing/types'
 import { useMediaQuery } from '@/hooks'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { GroupRatioBadge, type GroupRatio } from './auto-group-visuals'
@@ -34,13 +37,48 @@ import { GroupRatioBadge, type GroupRatio } from './auto-group-visuals'
 type ApiKeyGroupCellProps = {
   crossGroupRetry: boolean
   group: string
+  routing?: RoutingPolicy | null
   ratio?: GroupRatio
   shouldReduceMotion: boolean
 }
 
 export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const isMobile = useMediaQuery('(max-width: 640px)')
+
+  if (props.routing) {
+    const routing = props.routing
+    const mode =
+      routing.mode === 'fixed' ? t('Fixed group') : t('Smart routing')
+    let summary: string
+    if (routing.mode === 'fixed') {
+      summary = routing.fixed_group || t('Inherited group')
+    } else if (routing.strategy === 'custom') {
+      const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+      summary = `${t('Custom per model')} · ${t('Models')}: ${formatNumber(Object.keys(routing.models).length, locale)} · ${Object.keys(routing.models).join(', ')}`
+    } else {
+      const strategies = {
+        balanced: t('Balanced'),
+        price: t('Price first'),
+        speed: t('Speed first'),
+        success: t('Success first'),
+      }
+      summary = strategies[routing.strategy]
+    }
+    return (
+      <TruncatedCell
+        className={isMobile ? 'w-full' : 'max-w-50'}
+        tabIndex={0}
+        tooltipContent={`${mode} · ${summary}`}
+        tooltipClassName='break-all'
+      >
+        <span className='block font-medium'>{mode}</span>
+        <span className='text-muted-foreground block truncate text-xs'>
+          {summary}
+        </span>
+      </TruncatedCell>
+    )
+  }
 
   const group = props.group?.trim() || ''
   if (group !== 'auto') {

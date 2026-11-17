@@ -129,6 +129,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		var errorResp dto.OpenAITextResponse
 		if err := common.UnmarshalJsonStr(data, &errorResp); err == nil {
 			if oaiError := errorResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+				observeOpenAIProviderError(c, *oaiError)
 				if failResponsesStream(fmt.Errorf("%s", oaiError.Message)) {
 					// The client got response.failed, so the request is never
 					// retried; the recorded error keeps the stream failed.

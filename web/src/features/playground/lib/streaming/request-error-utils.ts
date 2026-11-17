@@ -1,3 +1,8 @@
+import {
+  getSubmissionReference,
+  type SubmissionReference,
+} from '@/features/mowan/smart-routing/submission-reference'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -31,6 +36,7 @@ type RequestErrorLike = {
 }
 
 export type RequestErrorDetails = {
+  submission?: SubmissionReference
   errorCode?: string
   errorMessage: string
 }
@@ -39,6 +45,9 @@ export function parseRequestErrorDetails(error: unknown): RequestErrorDetails {
   const requestError = error as RequestErrorLike
 
   return {
+    ...(getSubmissionReference(requestError?.response?.data)
+      ? { submission: getSubmissionReference(requestError?.response?.data) }
+      : {}),
     errorCode: requestError?.response?.data?.error?.code || undefined,
     errorMessage:
       requestError?.response?.data?.message ||

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"time"
@@ -101,7 +102,7 @@ func calcViolationFeeQuota(amount, groupRatio float64) int {
 // ChargeViolationFeeIfNeeded charges an additional fee after the normal flow finishes (including refund).
 // It uses Grok fee settings as the fee policy.
 func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
-	if ctx == nil || relayInfo == nil || apiErr == nil {
+	if ctx == nil || ctx.Request == nil || relayInfo == nil || apiErr == nil {
 		return false
 	}
 	//if relayInfo.IsPlayground {
@@ -122,10 +123,24 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		return false
 	}
 
-	if err := PostConsumeQuota(relayInfo, feeQuota, 0, true); err != nil {
+	requestID := common.GetContextKeyString(ctx, common.RequestIdKey)
+	if requestID == "" {
+		requestID = relayInfo.RequestId
+	}
+	if requestID == "" {
+		requestID = common.NewRequestId()
+		relayInfo.RequestId = requestID
+	}
+	operationID := fmt.Sprintf("violation:%x", sha256.Sum256([]byte(requestID+"\x00violation-fee")))
+	result, err := postConsumeFundingDelta(ctx.Request.Context(), relayInfo, feeQuota, operationID, false)
+	if err != nil {
 		logger.LogError(ctx, common.LogText("failed to charge violation fee: %s", err.Error()))
 		return false
 	}
+	if result.Replay {
+		return false
+	}
+	checkAndSendQuotaNotify(relayInfo, feeQuota, 0)
 
 	model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, feeQuota)
 	model.UpdateChannelUsedQuota(relayInfo.ChannelId, feeQuota)

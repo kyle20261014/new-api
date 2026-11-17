@@ -21,6 +21,14 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if err == nil {
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
 	}
+	if IsSmartRouting(c) {
+		if reason := RoutingRetryBarrier(c); reason != "" {
+			return PolicyDecision{Action: "stop", Reason: reason, Source: "routing"}
+		}
+		if types.IsSkipRetryError(err) || retryTimes <= 0 || operation_setting.IsAlwaysSkipRetryCode(err.GetErrorCode()) || operation_setting.IsAlwaysSkipRetryStatusCode(err.StatusCode) {
+			return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "routing"}
+		}
+	}
 	if ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		source := RequestPolicy(c).SessionModeSource
 		if source == "" {
