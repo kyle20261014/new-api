@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import * as client from './api'
-import type { Order, OrderLookup, Payment, Product } from './api'
+import type { Order, OrderLookup, Product } from './api'
 
 function readLookup(key: string): OrderLookup | null {
   try {
@@ -52,15 +52,9 @@ export function useIdataRiver(
   const currentLookup = useRef('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
-  const [payment, setPayment] = useState<Payment | null>(null)
-  const quote = useRef<(Payment & { trade_no: string; method: string }) | null>(
-    null
-  )
-  const quoteVersion = useRef(0)
+  const paymentVersion = useRef(0)
   const clearPayment = useCallback(() => {
-    quoteVersion.current++
-    quote.current = null
-    setPayment(null)
+    paymentVersion.current++
   }, [])
   const [open, updateOpen] = useState(false)
   const setOpen = (value: boolean) => {
@@ -68,6 +62,19 @@ export function useIdataRiver(
     updateOpen(value)
   }
   const flight = useRef(false)
+  useEffect(() => {
+    const restore = (event: PageTransitionEvent) => {
+      if (!event.persisted) return
+      clearPayment()
+      flight.current = false
+      setBusy(false)
+    }
+    window.addEventListener('pageshow', restore)
+    return () => {
+      clearPayment()
+      window.removeEventListener('pageshow', restore)
+    }
+  }, [clearPayment])
   const account = useRef(userId)
   account.current = userId
   const storageKey = userId ? `mowan-idr:v1:${userId}` : ''
@@ -105,23 +112,12 @@ export function useIdataRiver(
 
   const accept = useCallback(
     (value: Order) => {
-      if (
-        quote.current &&
-        (quote.current.trade_no !== value.trade_no ||
-          !value.can_pay ||
-          value.query_error ||
-          !value.payment_methods.some(
-            (m) => m.method === quote.current?.method
-          ))
-      ) {
-        clearPayment()
-      }
       setOrder(value)
       setError(value.query_error)
       save(client.pending(value) ? { trade_no: value.trade_no } : null)
       if (value.credited || value.platform_status === 'REFUND') void onSettled()
     },
-    [save, onSettled, clearPayment]
+    [save, onSettled]
   )
 
   const query = useCallback(
@@ -237,11 +233,11 @@ export function useIdataRiver(
   const pay = async (method: string) => {
     if (!order || flight.current || !userId) return
     clearPayment()
-    const version = quoteVersion.current
+    const version = paymentVersion.current
     const current = await query({ trade_no: order.trade_no })
     if (
       account.current !== userId ||
-      version !== quoteVersion.current ||
+      version !== paymentVersion.current ||
       !current?.can_pay ||
       current.query_error ||
       !current.payment_methods.some((m) => m.method === method)
@@ -250,48 +246,28 @@ export function useIdataRiver(
     }
     flight.current = true
     setBusy(true)
+    let leaving = false
     try {
       const res = await client.pay(current.trade_no, method)
-      if (account.current !== userId || version !== quoteVersion.current) return
+      if (account.current !== userId || version !== paymentVersion.current) {
+        return
+      }
       if (!res.success || !res.data) throw new Error()
       if ('trade_no' in res.data) accept(res.data)
       if (!('pay_url' in res.data)) return
       const url = client.paymentUrl(res.data.pay_url)
       if (!url) throw new Error()
-      setPayment(res.data)
-      quote.current = { ...res.data, trade_no: current.trade_no, method }
       save({ trade_no: current.trade_no })
+      window.location.assign(url)
+      leaving = true
     } catch {
       if (account.current === userId) setError(true)
     } finally {
-      flight.current = false
-      if (account.current === userId) setBusy(false)
+      if (!leaving) {
+        flight.current = false
+        if (account.current === userId) setBusy(false)
+      }
     }
-  }
-
-  const continuePayment = (method: string) => {
-    const ready = quote.current
-    if (
-      !ready ||
-      flight.current ||
-      error ||
-      !order?.can_pay ||
-      ready.trade_no !== order.trade_no ||
-      ready.method !== method ||
-      !order.payment_methods.some((m) => m.method === method)
-    ) {
-      return
-    }
-    const url = client.paymentUrl(ready.pay_url)
-    if (!url) {
-      clearPayment()
-      setError(true)
-      return
-    }
-    // Consume synchronously so a double click cannot reuse this confirmation.
-    clearPayment()
-    save({ trade_no: order.trade_no })
-    window.location.assign(url)
   }
 
   const choose = () => {
@@ -312,14 +288,12 @@ export function useIdataRiver(
     lookup,
     busy,
     error,
-    payment,
     open,
     setOpen,
     choose,
     create,
     resume,
     pay,
-    continuePayment,
     clearPayment,
     query,
   }

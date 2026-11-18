@@ -162,10 +162,9 @@ export function FixedPaymentDialog({
       open={flow.open}
       onOpenChange={onOpenChange}
       processing={flow.busy}
-      confirmLabel={flow.payment ? t('Continue to payment') : t('Continue')}
+      confirmLabel={creating ? t('Continue') : t('Continue to payment')}
       onConfirm={() => {
         if (creating && selected) void flow.create(selected)
-        else if (flow.payment) flow.continuePayment(currentMethod)
         else void flow.pay(currentMethod)
       }}
       fixedContent={
@@ -184,9 +183,7 @@ export function FixedPaymentDialog({
               </dd>
               <dt>{t('You Pay')}</dt>
               <dd className='text-end'>
-                {flow.payment?.amount != null && flow.payment.pay_currency
-                  ? `${formatPaymentAmount(flow.payment.amount, language)} ${flow.payment.pay_currency}`
-                  : t('Confirmed on the official payment page')}
+                {t('Confirmed on the official payment page')}
               </dd>
             </dl>
           )}

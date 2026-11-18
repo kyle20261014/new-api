@@ -136,7 +136,9 @@ it('uses the existing confirmation dialog, distinguishes USD price and credit, a
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   expect(await screen.findByRole('radio', { name: 'Alipay' })).toBeChecked()
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
+    expect(
+      screen.getByRole('button', { name: 'Continue to payment' })
+    ).toBeEnabled()
   )
   await user.keyboard('{Escape}')
   await waitFor(() =>
@@ -156,32 +158,23 @@ it.each([
   ['fr', '0,0002'],
   ['ru', '0,0002'],
   ['vi', '0,0002'],
-])(
-  'preserves small nonzero package and crypto amounts in %s',
-  async (locale, amount) => {
-    language.value = locale
-    const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
-    render(
-      <FixedPaymentDialog
-        flow={{
-          ...result.current,
-          open: true,
-          order: { ...order, price: 0.0002, quota: 0.0002 },
-          payment: {
-            amount: 0.0002,
-            pay_currency: 'BTC',
-            pay_url: 'https://example.test/pay',
-          },
-        }}
-        selected={null}
-        onClear={() => {}}
-      />
-    )
-    const dialog = within(screen.getByRole('alertdialog'))
-    expect(dialog.getAllByText(`${amount} USD`)).toHaveLength(2)
-    expect(dialog.getByText(`${amount} BTC`)).toBeInTheDocument()
-  }
-)
+])('preserves small nonzero package amounts in %s', async (locale, amount) => {
+  language.value = locale
+  const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
+  render(
+    <FixedPaymentDialog
+      flow={{
+        ...result.current,
+        open: true,
+        order: { ...order, price: 0.0002, quota: 0.0002 },
+      }}
+      selected={null}
+      onClear={() => {}}
+    />
+  )
+  const dialog = within(screen.getByRole('alertdialog'))
+  expect(dialog.getAllByText(`${amount} USD`)).toHaveLength(2)
+})
 
 it('offers retry after a creation rejection and preserves the original attempt', async () => {
   useSystemConfigStore
@@ -239,11 +232,6 @@ it('keeps unknown payment amounts distinct from zero', () => {
         ...result.current,
         open: true,
         order,
-        payment: {
-          amount: null,
-          pay_currency: 'BTC',
-          pay_url: 'https://example.test/pay',
-        },
       }}
       selected={null}
       onClear={() => {}}
@@ -256,7 +244,7 @@ it('keeps unknown payment amounts distinct from zero', () => {
 })
 
 it.each([0.0002, 72, null])(
-  'waits for explicit navigation after displaying channel amount %s',
+  'navigates after one payment click regardless of channel amount %s',
   async (amount) => {
     useSystemConfigStore.getState().setConfig(
       mapStatusDataToConfig({
@@ -281,23 +269,19 @@ it.each([0.0002, 72, null])(
       await user.click(screen.getByRole('button', { name: 'Continue' }))
       await screen.findByRole('radio', { name: 'Alipay' })
       await waitFor(() =>
-        expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
+        expect(screen.getByRole('button', { name: /Continue/ })).toBeEnabled()
       )
-      await user.click(screen.getByRole('button', { name: 'Continue' }))
-      await waitFor(() => expect(api.pay).toHaveBeenCalledTimes(1))
-      const next = await screen.findByRole('button', {
-        name: 'Continue to payment',
-      })
-      expect(assign).not.toHaveBeenCalled()
-      expect(
-        screen.getByText(
-          amount === null
-            ? 'Confirmed on the official payment page'
-            : `${amount} ${amount === 72 ? 'CNY' : 'BTC'}`
+      const pay = screen.getByRole('button', { name: /Continue/ })
+      await user.click(pay)
+      await waitFor(() =>
+        expect(assign).toHaveBeenCalledExactlyOnceWith(
+          'https://example.test/pay'
         )
-      ).toBeVisible()
-      await user.click(next)
-      expect(assign).toHaveBeenCalledExactlyOnceWith('https://example.test/pay')
+      )
+      expect(pay).toBeDisabled()
+      await user.click(pay)
+      expect(assign).toHaveBeenCalledTimes(1)
+      expect(api.pay).toHaveBeenCalledExactlyOnceWith(order.trade_no, 'alipay')
       expect(api.create).toHaveBeenCalledTimes(1)
     } finally {
       vi.unstubAllGlobals()
@@ -355,7 +339,7 @@ it.each(['DONE', 'EXPIRED', 'REFUND', 'no channels'] as const)(
   }
 )
 
-it('clears the old quote when switching channels and fetches the new channel before navigation', async () => {
+it('uses the selected channel and navigates immediately without requesting the previous channel', async () => {
   const multi = {
     ...order,
     payment_methods: [
@@ -365,42 +349,40 @@ it('clears the old quote when switching channels and fetches the new channel bef
   }
   vi.mocked(api.create).mockResolvedValue({ success: true, data: multi })
   vi.mocked(api.check).mockResolvedValue({ success: true, data: multi })
-  vi.mocked(api.pay)
-    .mockResolvedValueOnce({
-      success: true,
-      data: {
-        amount: 10,
-        pay_currency: 'CNY',
-        pay_url: 'https://example.test/old',
-      },
-    })
-    .mockResolvedValueOnce({
-      success: true,
-      data: {
-        amount: 0.0002,
-        pay_currency: 'BTC',
-        pay_url: 'https://example.test/new',
-      },
-    })
-  const user = userEvent.setup()
-  render(<WalletPayment />)
-  await user.click(await screen.findByRole('button', { name: /Ten/ }))
-  await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await screen.findByRole('radio', { name: 'Alipay' })
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
-  )
-  await user.click(screen.getByRole('button', { name: 'Continue' }))
-  expect(await screen.findByText('10 CNY')).toBeVisible()
-  await user.click(screen.getByRole('radio', { name: 'Crypto' }))
-  expect(screen.queryByText('10 CNY')).not.toBeInTheDocument()
-  expect(
-    screen.queryByRole('button', { name: 'Continue to payment' })
-  ).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Continue' }))
-  expect(await screen.findByText('0.0002 BTC')).toBeVisible()
-  expect(api.pay).toHaveBeenLastCalledWith(order.trade_no, 'crypto')
-  expect(api.create).toHaveBeenCalledTimes(1)
+  vi.mocked(api.pay).mockResolvedValue({
+    success: true,
+    data: {
+      amount: 0.0002,
+      pay_currency: 'BTC',
+      pay_url: 'https://example.test/new',
+    },
+  })
+  const assign = vi.fn()
+  vi.stubGlobal('location', { ...window.location, assign })
+  try {
+    const user = userEvent.setup()
+    render(<WalletPayment />)
+    await user.click(await screen.findByRole('button', { name: /Ten/ }))
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await screen.findByRole('radio', { name: 'Alipay' })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Continue to payment' })
+      ).toBeEnabled()
+    )
+    await user.click(screen.getByRole('radio', { name: 'Crypto' }))
+    expect(api.pay).not.toHaveBeenCalled()
+    await user.click(
+      screen.getByRole('button', { name: 'Continue to payment' })
+    )
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledExactlyOnceWith('https://example.test/new')
+    )
+    expect(api.pay).toHaveBeenCalledExactlyOnceWith(order.trade_no, 'crypto')
+    expect(api.create).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })
 
 it.each([

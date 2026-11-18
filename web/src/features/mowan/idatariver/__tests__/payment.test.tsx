@@ -46,6 +46,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 it('does not create on selection and preserves a lost create response without replay', async () => {
@@ -255,7 +256,49 @@ it('rejects a stale account response without exposing its order', async () => {
   expect(localStorage.getItem('mowan-idr:v1:2')).toBeNull()
 })
 
-it('invalidates an in-flight quote when the dialog closes', async () => {
+it.each(['closed', 'unmounted'])(
+  'does not navigate an in-flight payment after the dialog is %s',
+  async (state) => {
+    const assign = vi.fn()
+    vi.stubGlobal('location', { ...window.location, assign })
+    let finish!: (value: Awaited<ReturnType<typeof api.pay>>) => void
+    vi.mocked(api.pay).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const { result, unmount } = renderHook(() =>
+      useIdataRiver(1, undefined, settled)
+    )
+    await act(() => result.current.resume({ trade_no: order.trade_no }))
+    await waitFor(() => expect(result.current.busy).toBe(false))
+    let pending!: Promise<void>
+    act(() => {
+      pending = result.current.pay('alipay')
+    })
+    await waitFor(() => expect(api.pay).toHaveBeenCalledTimes(1))
+    if (state === 'closed') act(() => result.current.setOpen(false))
+    else unmount()
+    await act(async () => {
+      finish({
+        success: true,
+        data: {
+          amount: 0.0002,
+          pay_currency: 'BTC',
+          pay_url: 'https://example.test/pay',
+        },
+      })
+      await pending
+    })
+    expect(assign).not.toHaveBeenCalled()
+    expect(result.current.lookup).toEqual({ trade_no: order.trade_no })
+  }
+)
+
+it('does not navigate an in-flight payment after switching accounts', async () => {
+  const assign = vi.fn()
+  vi.stubGlobal('location', { ...window.location, assign })
   let finish!: (value: Awaited<ReturnType<typeof api.pay>>) => void
   vi.mocked(api.pay).mockImplementation(
     () =>
@@ -263,7 +306,10 @@ it('invalidates an in-flight quote when the dialog closes', async () => {
         finish = resolve
       })
   )
-  const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
+  const { result, rerender } = renderHook(
+    ({ id }) => useIdataRiver(id, undefined, settled),
+    { initialProps: { id: 1 } }
+  )
   await act(() => result.current.resume({ trade_no: order.trade_no }))
   await waitFor(() => expect(result.current.busy).toBe(false))
   let pending!: Promise<void>
@@ -271,52 +317,24 @@ it('invalidates an in-flight quote when the dialog closes', async () => {
     pending = result.current.pay('alipay')
   })
   await waitFor(() => expect(api.pay).toHaveBeenCalledTimes(1))
-  act(() => result.current.setOpen(false))
+  rerender({ id: 2 })
   await act(async () => {
     finish({
       success: true,
       data: {
-        amount: 0.0002,
-        pay_currency: 'BTC',
+        amount: null,
+        pay_currency: null,
         pay_url: 'https://example.test/pay',
       },
     })
     await pending
   })
-  expect(result.current.payment).toBeNull()
-  expect(result.current.lookup).toEqual({ trade_no: order.trade_no })
-})
-
-it('discards a quote on a trusted terminal update and cannot navigate it', async () => {
-  vi.mocked(api.pay).mockResolvedValue({
-    success: true,
-    data: {
-      amount: 0.0002,
-      pay_currency: 'BTC',
-      pay_url: 'https://example.test/pay',
-    },
-  })
-  const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
-  await act(() => result.current.resume({ trade_no: order.trade_no }))
-  await waitFor(() => expect(result.current.busy).toBe(false))
-  await act(() => result.current.pay('alipay'))
-  expect(result.current.payment?.amount).toBe(0.0002)
-  vi.mocked(api.check).mockResolvedValue({
-    success: true,
-    data: {
-      ...order,
-      status: 'success',
-      platform_status: 'DONE',
-      credited: true,
-      can_pay: false,
-    },
-  })
-  await act(() => result.current.query({ trade_no: order.trade_no }))
-  expect(result.current.payment).toBeNull()
+  expect(assign).not.toHaveBeenCalled()
+  expect(result.current.order).toBeNull()
   expect(result.current.lookup).toBeNull()
 })
 
-it('rejects a different channel and consumes the confirmed link only once', async () => {
+it('rejects an unavailable channel and navigates only once for repeated payment clicks', async () => {
   const assign = vi.fn()
   vi.stubGlobal('location', { ...window.location, assign })
   try {
@@ -331,18 +349,49 @@ it('rejects a different channel and consumes the confirmed link only once', asyn
     const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
     await act(() => result.current.resume({ trade_no: order.trade_no }))
     await waitFor(() => expect(result.current.busy).toBe(false))
-    await act(() => result.current.pay('alipay'))
-    act(() => result.current.continuePayment('crypto'))
+    await act(() => result.current.pay('crypto'))
     expect(assign).not.toHaveBeenCalled()
-    act(() => {
-      result.current.continuePayment('alipay')
-      result.current.continuePayment('alipay')
+    expect(api.pay).not.toHaveBeenCalled()
+    await act(async () => {
+      await Promise.all([
+        result.current.pay('alipay'),
+        result.current.pay('alipay'),
+      ])
     })
+    await act(() => result.current.pay('alipay'))
     expect(assign).toHaveBeenCalledExactlyOnceWith('https://example.test/pay')
+    expect(api.pay).toHaveBeenCalledExactlyOnceWith(order.trade_no, 'alipay')
     expect(api.create).not.toHaveBeenCalled()
   } finally {
     vi.unstubAllGlobals()
   }
+})
+
+it('restores payment controls after returning through the browser back cache without resubmitting', async () => {
+  const assign = vi.fn()
+  vi.stubGlobal('location', { ...window.location, assign })
+  vi.mocked(api.pay).mockResolvedValue({
+    success: true,
+    data: {
+      amount: null,
+      pay_currency: null,
+      pay_url: 'https://example.test/pay',
+    },
+  })
+  const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
+  await act(() => result.current.resume({ trade_no: order.trade_no }))
+  await waitFor(() => expect(result.current.busy).toBe(false))
+  await act(() => result.current.pay('alipay'))
+  expect(result.current.busy).toBe(true)
+  act(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent('pageshow', { persisted: true })
+    )
+  )
+  expect(result.current.busy).toBe(false)
+  expect(result.current.lookup).toEqual({ trade_no: order.trade_no })
+  expect(api.pay).toHaveBeenCalledTimes(1)
+  expect(assign).toHaveBeenCalledTimes(1)
 })
 
 it('stops automatic queries after twelve attempts and preserves manual recovery', async () => {
