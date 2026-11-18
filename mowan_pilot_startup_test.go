@@ -1,8 +1,6 @@
 package main
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -10,31 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFundingPilotRuntimeLimits(t *testing.T) {
-	p := fundingPilotStartup{receipt: model.RoutingFundingPilotReceipt{Mode: model.RoutingFundingPilotMode, BindIP: "127.0.0.1", MaxInFlight: 1}}
+func TestFundingPilotListenAddress(t *testing.T) {
+	p := fundingPilotStartup{receipt: model.RoutingFundingPilotReceipt{Mode: model.RoutingFundingPilotMode, BindIP: "127.0.0.1"}}
 	require.Equal(t, "127.0.0.1:3000", p.listenAddress("3000"))
-	started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	handler := p.limitHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/held" {
-			close(started)
-			<-release
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	go func() {
-		defer close(done)
-		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/held", nil))
-	}()
-	<-started
-	busy := httptest.NewRecorder()
-	handler.ServeHTTP(busy, httptest.NewRequest(http.MethodGet, "/api/status", nil))
-	close(release)
-	<-done
-	require.Equal(t, http.StatusServiceUnavailable, busy.Code)
-	require.Equal(t, "1", busy.Header().Get("Retry-After"))
-	ready := httptest.NewRecorder()
-	handler.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/api/status", nil))
-	require.Equal(t, http.StatusNoContent, ready.Code)
 }
 
 func TestFundingPilotRejectsBatchAndWrongBuild(t *testing.T) {

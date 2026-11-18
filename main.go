@@ -210,7 +210,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    pilot.listenAddress(port),
-		Handler: pilot.limitHTTP(server),
+		Handler: server,
 	}
 
 	go func() {

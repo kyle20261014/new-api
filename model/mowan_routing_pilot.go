@@ -36,12 +36,11 @@ type RoutingFundingPilotReceipt struct {
 	PoolMaxOpenConns  int    `json:"pool_max_open_conns"`
 	NodeCount         int    `json:"node_count"`
 	BindIP            string `json:"bind_ip"`
-	MaxInFlight       int    `json:"max_in_flight"`
 }
 
 func ParseRoutingFundingPilotReceipt(raw, deploymentID, candidateCommit string, nodeCount int) (RoutingFundingPilotReceipt, error) {
 	var r RoutingFundingPilotReceipt
-	if len(raw) > 65536 || common.UnmarshalJsonStr(raw, &r) != nil || r.SchemaVersion != 1 || r.Mode != RoutingFundingPilotMode || r.CutoffAt <= 0 || r.ReviewedAt < r.CutoffAt || r.ReviewedAt > common.GetTimestamp()+60 || nodeCount != 1 || r.NodeCount != 1 || r.DeploymentID != deploymentID || r.CandidateCommit != candidateCommit || r.PoolMaxOpenConns < 2 || r.MaxInFlight < 1 || r.MaxInFlight >= r.PoolMaxOpenConns || r.OldWriterRole == r.WriterRole {
+	if len(raw) > 65536 || common.UnmarshalJsonStr(raw, &r) != nil || r.SchemaVersion != 1 || r.Mode != RoutingFundingPilotMode || r.CutoffAt <= 0 || r.ReviewedAt < r.CutoffAt || r.ReviewedAt > common.GetTimestamp()+60 || nodeCount != 1 || r.NodeCount != 1 || r.DeploymentID != deploymentID || r.CandidateCommit != candidateCommit || r.PoolMaxOpenConns < 2 || r.OldWriterRole == r.WriterRole {
 		return r, ErrRoutingFundingMigrationBlocked
 	}
 	for _, value := range []string{r.ReviewedBy, r.OpeningBalanceRef, r.DifferencesRef, r.InFlightRef, r.BackupRef, r.IsolationRef, r.AccessControlRef, r.DeploymentID, r.DatabaseVersion, r.DatabaseName, r.WriterRole, r.OldWriterRole} {

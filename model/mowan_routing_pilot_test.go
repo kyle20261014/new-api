@@ -11,7 +11,7 @@ import (
 )
 
 func testPilotReceipt() RoutingFundingPilotReceipt {
-	return RoutingFundingPilotReceipt{SchemaVersion: 1, Mode: RoutingFundingPilotMode, ReviewedBy: "synthetic", ReviewedAt: common.GetTimestamp(), CutoffAt: common.GetTimestamp() - 1, OpeningBalanceRef: "test/opening", DifferencesRef: "test/differences", InFlightRef: "test/in-flight", BackupRef: "test/backup", IsolationRef: "test/isolation", AccessControlRef: "test/access", DeploymentID: "synthetic-pilot", CandidateCommit: "1234567890abcdef1234567890abcdef12345678", DatabaseVersion: "synthetic-version", DatabaseName: "synthetic-db", WriterRole: "synthetic-writer", OldWriterRole: "synthetic-old", PoolMaxOpenConns: 4, NodeCount: 1, BindIP: "127.0.0.1", MaxInFlight: 2}
+	return RoutingFundingPilotReceipt{SchemaVersion: 1, Mode: RoutingFundingPilotMode, ReviewedBy: "synthetic", ReviewedAt: common.GetTimestamp(), CutoffAt: common.GetTimestamp() - 1, OpeningBalanceRef: "test/opening", DifferencesRef: "test/differences", InFlightRef: "test/in-flight", BackupRef: "test/backup", IsolationRef: "test/isolation", AccessControlRef: "test/access", DeploymentID: "synthetic-pilot", CandidateCommit: "1234567890abcdef1234567890abcdef12345678", DatabaseVersion: "synthetic-version", DatabaseName: "synthetic-db", WriterRole: "synthetic-writer", OldWriterRole: "synthetic-old", PoolMaxOpenConns: 4, NodeCount: 1, BindIP: "127.0.0.1"}
 }
 
 func TestRoutingFundingPilotReceipt(t *testing.T) {
@@ -23,6 +23,13 @@ func TestRoutingFundingPilotReceipt(t *testing.T) {
 	}
 	_, err := ParseRoutingFundingPilotReceipt(marshal(r), r.DeploymentID, r.CandidateCommit, 1)
 	require.NoError(t, err)
+	legacy, err := common.Marshal(struct {
+		RoutingFundingPilotReceipt
+		MaxInFlight int `json:"max_in_flight"`
+	}{r, 4})
+	require.NoError(t, err)
+	_, err = ParseRoutingFundingPilotReceipt(string(legacy), r.DeploymentID, r.CandidateCommit, 1)
+	require.NoError(t, err, "legacy HTTP limit must not block receipt compatibility")
 	for name, mutate := range map[string]func(*RoutingFundingPilotReceipt){
 		"no opening balance":  func(r *RoutingFundingPilotReceipt) { r.OpeningBalanceRef = "" },
 		"no differences":      func(r *RoutingFundingPilotReceipt) { r.DifferencesRef = "" },
@@ -34,7 +41,7 @@ func TestRoutingFundingPilotReceipt(t *testing.T) {
 		"public interface":    func(r *RoutingFundingPilotReceipt) { r.BindIP = "8.8.8.8" },
 		"wrong commit":        func(r *RoutingFundingPilotReceipt) { r.CandidateCommit = "abc" },
 		"multiple writers":    func(r *RoutingFundingPilotReceipt) { r.NodeCount = 2 },
-		"no pool headroom":    func(r *RoutingFundingPilotReceipt) { r.MaxInFlight = r.PoolMaxOpenConns },
+		"invalid pool":        func(r *RoutingFundingPilotReceipt) { r.PoolMaxOpenConns = 1 },
 		"same DB login":       func(r *RoutingFundingPilotReceipt) { r.OldWriterRole = r.WriterRole },
 	} {
 		t.Run(name, func(t *testing.T) {

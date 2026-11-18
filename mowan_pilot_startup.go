@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"runtime/debug"
 	"time"
@@ -108,23 +107,4 @@ func (p *fundingPilotStartup) close() {
 
 func (p *fundingPilotStartup) listenAddress(port string) string {
 	return net.JoinHostPort(p.receipt.BindIP, port)
-}
-
-func (p *fundingPilotStartup) limitHTTP(next http.Handler) http.Handler {
-	if p.receipt.Mode != model.RoutingFundingPilotMode {
-		return next
-	}
-	// ponytail: one shared in-flight ceiling; isolate provider callbacks at the
-	// proxy first if pilot requests routinely exhaust the reviewed limit.
-	slots := make(chan struct{}, p.receipt.MaxInFlight)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case slots <- struct{}{}:
-			defer func() { <-slots }()
-			next.ServeHTTP(w, r)
-		default:
-			w.Header().Set("Retry-After", "1")
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-		}
-	})
 }
