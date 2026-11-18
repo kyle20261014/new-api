@@ -253,7 +253,7 @@ func (c client) pay(ctx context.Context, s *model.IdataRiverOrder, method string
 		return nil, err
 	}
 	u, parseErr := url.Parse(result.URL)
-	if parseErr != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" || (u.Hostname() != "idatariver.com" && !strings.HasSuffix(u.Hostname(), ".idatariver.com")) || u.Fragment != "" {
+	if parseErr != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" || u.Hostname() == "" || u.Fragment != "" {
 		return nil, common.NewMessage("Invalid iDataRiver payment link")
 	}
 	if result.Currency != nil && (*result.Currency == "" || len(*result.Currency) > 20) {

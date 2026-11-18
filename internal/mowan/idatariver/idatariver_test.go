@@ -420,6 +420,12 @@ func TestIdataRiverCheckoutAndRecovery(t *testing.T) {
 	assert.Nil(t, pay["pay_currency"])
 	assert.Contains(t, pay, "amount")
 	assert.Nil(t, pay["amount"])
+	for _, link := range []string{"https://d1e3d.payerbridge.com/pay/order", "https://checkout.example.net/pay/order"} {
+		r.payURL = link
+		_, result := call(Pay, u.Id, `{"trade_no":"`+trade+`","method":"crypto"}`)
+		assert.Equal(t, link, result["data"].(map[string]any)["pay_url"])
+		assert.Equal(t, false, result["data"].(map[string]any)["query_error"])
+	}
 	r.payCurrency, r.payAmount = "CNY", "75.25"
 	_, paid = call(Pay, u.Id, `{"trade_no":"`+trade+`","method":"crypto"}`)
 	pay = paid["data"].(map[string]any)
@@ -577,7 +583,7 @@ func TestIdataRiverTrustBoundaryAndUnavailableProducts(t *testing.T) {
 		assert.Equal(t, 503, w.Code, i)
 	}
 	r.mutate = nil
-	for _, link := range []string{"http://idatariver.com/pay", "https://idatariver.com.evil.example/pay", "javascript:alert(1)", "https://idatariver.com@evil.example/pay", "https://127.0.0.1/pay"} {
+	for _, link := range []string{"http://idatariver.com/pay", "javascript:alert(1)", "https://idatariver.com@evil.example/pay", "https://idatariver.com:8443/pay", "https://idatariver.com/pay#fragment", "https:///pay", ""} {
 		setRemoteStatus(r, "NEW")
 		r.payURL = link
 		_, result := call(Pay, u.Id, `{"trade_no":"`+trade+`","method":"crypto"}`)
