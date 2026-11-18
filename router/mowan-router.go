@@ -29,12 +29,12 @@ func registerMowanRoutes(api *gin.RouterGroup) {
 	user.GET("/products", idatariver.Products)
 	user.POST("/order", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("idatariver_order"), idatariver.CreateOrder)
 	user.POST("/pay", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("idatariver_pay"), idatariver.Pay)
-	user.POST("/check", middleware.UserCriticalRateLimit("idatariver_check"), idatariver.Check)
+	user.POST("/check", idatariver.Check)
 	// Hand off persisted checkouts from the previous gateway. Order creation
 	// remains on the new endpoint, which requires an idempotency key.
 	legacy := api.Group("/user/idatariver")
 	legacy.POST("/notify", middleware.AnonymousRequestBodyLimit(), idatariver.LegacyNotify)
 	legacyUser := legacy.Group("", middleware.DisableCache(), middleware.UserAuth())
 	legacyUser.POST("/pay", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("idatariver_pay"), idatariver.Pay)
-	legacyUser.POST("/check", middleware.UserCriticalRateLimit("idatariver_check"), idatariver.Check)
+	legacyUser.POST("/check", idatariver.Check)
 }
