@@ -229,22 +229,6 @@ For commercial licensing, please contact support@quantumnous.com
   animation: mowan-vortex-spin 30s linear infinite;
 }
 
-/* Accessibility: Reduced Motion */
-@media (prefers-reduced-motion: reduce) {
-  .mowan-landing .mowan-pulse-glow,
-  .mowan-landing .mowan-orbit-anim,
-  .mowan-landing .mowan-orbit-reverse,
-  .mowan-landing .mowan-float-slow,
-  .mowan-landing .mowan-float-delay-1,
-  .mowan-landing .mowan-float-delay-2,
-  .mowan-landing .mowan-marquee-track-left,
-  .mowan-landing .mowan-marquee-track-right,
-  .mowan-landing .mowan-vortex-spin {
-    animation: none !important;
-    transform: none !important;
-  }
-}
-
 /* WebGL Particle Scene Background */
 .mowan-landing .xc-beijing {
   position: fixed;
@@ -834,15 +818,6 @@ For commercial licensing, please contact support@quantumnous.com
   border-color: rgba(56, 189, 248, 0.8) !important;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mowan-landing .xc-pubu-card {
-    transition: none !important;
-  }
-  .mowan-landing .xc-pubu-card:hover {
-    transform: none !important;
-  }
-}
-
 .mowan-landing .xc-pubu-img {
   width: 100%;
   height: auto;
@@ -1062,17 +1037,6 @@ For commercial licensing, please contact support@quantumnous.com
   }
   .mowan-landing .xc-orbit {
     width: 76% !important;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .mowan-landing .xc-floating,
-  .mowan-landing .xc-model-track {
-    animation: none !important;
-    transform: none !important;
-  }
-  .mowan-landing .xc-model-group[aria-hidden='true'] {
-    display: none !important;
   }
 }
 
@@ -1369,11 +1333,4 @@ For commercial licensing, please contact support@quantumnous.com
 
 .mowan-loader-brand-text {
   animation: mowan-loader-brand-shimmer 2.4s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .mowan-loader-core-flame,
-  .mowan-loader-brand-text {
-    animation: none !important;
-  }
 }

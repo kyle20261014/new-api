@@ -285,40 +285,19 @@ export function ParticleRibbon(props: ParticleRibbonProps) {
       }
     }
 
-    const mediaQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)')
-    let isReducedMotion = mediaQuery?.matches ?? false
     let animId = 0
     const startTime = performance.now()
 
     const loop = (now: number) => {
       const elapsed = (now - startTime) / 1000
       render(elapsed)
-      if (!isReducedMotion) {
-        animId = requestAnimationFrame(loop)
-      }
-    }
-
-    if (isReducedMotion) {
-      render(0)
-    } else {
       animId = requestAnimationFrame(loop)
     }
 
-    const handleMotionChange = (e: MediaQueryListEvent) => {
-      isReducedMotion = e.matches
-      cancelAnimationFrame(animId)
-      if (isReducedMotion) {
-        render(0)
-      } else {
-        animId = requestAnimationFrame(loop)
-      }
-    }
-
-    mediaQuery?.addEventListener?.('change', handleMotionChange)
+    animId = requestAnimationFrame(loop)
 
     return () => {
       cancelAnimationFrame(animId)
-      mediaQuery?.removeEventListener?.('change', handleMotionChange)
     }
   }, [])
 

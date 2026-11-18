@@ -50,11 +50,7 @@ export function HeroSection(props: HeroSectionProps) {
   const handleScrollTo = (id: string) => {
     const el = document.querySelector<HTMLElement>(`#${id}`)
     if (el) {
-      el.scrollIntoView({
-        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-          ? 'auto'
-          : 'smooth',
-      })
+      el.scrollIntoView({ behavior: 'smooth' })
     }
   }
 
@@ -174,7 +170,7 @@ export function HeroSection(props: HeroSectionProps) {
         className='xc-scroll'
       >
         <span>{t('mowan.hero.scrollDown', '向下探索')}</span>
-        <ChevronDown className='size-3.5 motion-safe:animate-bounce' />
+        <ChevronDown className='size-3.5 animate-bounce' />
       </button>
     </section>
   )

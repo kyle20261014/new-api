@@ -44,13 +44,7 @@ export function Home() {
 
   useEffect(() => {
     if (showLoading || !overlayVisible) return
-    const reduced = window.matchMedia(
-      '(prefers-reduced-motion: reduce)'
-    ).matches
-    const timer = window.setTimeout(
-      () => setOverlayVisible(false),
-      reduced ? 150 : 350
-    )
+    const timer = window.setTimeout(() => setOverlayVisible(false), 350)
     return () => window.clearTimeout(timer)
   }, [showLoading, overlayVisible])
 
@@ -129,8 +123,7 @@ export function Home() {
     <>
       <div
         className={cn(
-          isOverlayPresent &&
-            'transition-opacity duration-350 ease-out motion-reduce:duration-150',
+          isOverlayPresent && 'transition-opacity duration-350 ease-out',
           isOverlayPresent && !isExiting ? 'opacity-0' : 'opacity-100'
         )}
         inert={isOverlayPresent || undefined}
@@ -144,14 +137,14 @@ export function Home() {
           aria-busy='true'
           className={cn(
             'mowan-home-loader-screen fixed inset-0 z-[1000] flex items-center justify-center overflow-hidden px-6 text-[#eef0fa]',
-            'transition-opacity duration-350 ease-out motion-reduce:duration-150',
+            'transition-opacity duration-350 ease-out',
             isExiting && 'opacity-0'
           )}
         >
           <div
             className={cn(
-              'flex flex-col items-center gap-7 transition-[opacity,transform] duration-350 ease-out motion-reduce:duration-150',
-              isExiting && 'scale-95 opacity-0 motion-reduce:scale-100'
+              'flex flex-col items-center gap-7 transition-[opacity,transform] duration-350 ease-out',
+              isExiting && 'scale-95 opacity-0'
             )}
           >
             <ParticleRibbon>

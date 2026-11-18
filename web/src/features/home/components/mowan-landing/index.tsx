@@ -70,10 +70,7 @@ export function MowanLanding() {
       const boundedY = Math.max(0, Math.min(targetY, maxScroll))
       const startY = window.scrollY
 
-      const prefersReduced = window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches
-      if (prefersReduced || Math.abs(boundedY - startY) < 1) {
+      if (Math.abs(boundedY - startY) < 1) {
         window.scrollTo({ top: boundedY, behavior: 'instant' })
         return
       }
@@ -153,68 +150,28 @@ export function MowanLanding() {
     let cleanupScene: (() => void) | null = null
     let isMounted = true
 
-    const startScene = () => {
-      if (cleanupScene || !isMounted) return
-      try {
-        cleanupScene = createParticleScene(
-          canvas,
-          () => progressRef.current,
-          () => {
-            if (isMounted) setIsParticleReady(false)
-          },
-          () => sphereCenterRef.current,
-          containerRef.current?.querySelector<HTMLElement>('.xc-capsule')
-        )
-        if (cleanupScene) {
-          requestAnimationFrame(() => {
-            if (isMounted) setIsParticleReady(true)
-          })
-        }
-      } catch {
-        // Retain fallback stars background on WebGL initialization failure
-      }
-    }
-
-    const stopScene = () => {
+    try {
+      cleanupScene = createParticleScene(
+        canvas,
+        () => progressRef.current,
+        () => {
+          if (isMounted) setIsParticleReady(false)
+        },
+        () => sphereCenterRef.current,
+        containerRef.current?.querySelector<HTMLElement>('.xc-capsule')
+      )
       if (cleanupScene) {
-        cleanupScene()
-        cleanupScene = null
+        requestAnimationFrame(() => {
+          if (isMounted) setIsParticleReady(true)
+        })
       }
-      if (isMounted) {
-        setIsParticleReady(false)
-      }
-    }
-
-    const mql = window.matchMedia('(prefers-reduced-motion: reduce)')
-    if (!mql.matches) {
-      startScene()
-    }
-
-    const handleMotionPreferenceChange = (
-      e: MediaQueryListEvent | MediaQueryList
-    ) => {
-      if (e.matches) {
-        stopScene()
-      } else {
-        startScene()
-      }
-    }
-
-    if (typeof mql.addEventListener === 'function') {
-      mql.addEventListener('change', handleMotionPreferenceChange)
-    } else if (typeof mql.addListener === 'function') {
-      // Fallback for older browsers
-      mql.addListener(handleMotionPreferenceChange)
+    } catch {
+      // Retain fallback stars background on WebGL initialization failure
     }
 
     return () => {
       isMounted = false
-      if (typeof mql.removeEventListener === 'function') {
-        mql.removeEventListener('change', handleMotionPreferenceChange)
-      } else if (typeof mql.removeListener === 'function') {
-        mql.removeListener(handleMotionPreferenceChange)
-      }
-      stopScene()
+      cleanupScene?.()
     }
   }, [])
 

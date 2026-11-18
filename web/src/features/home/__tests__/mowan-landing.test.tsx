@@ -35,6 +35,7 @@ import {
   render,
   renderHook,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react'
 import i18next from 'i18next'
@@ -340,9 +341,9 @@ describe('Home Page & Mowan AI Landing Feature', () => {
 
   test.each([
     { reduced: false, duration: 350 },
-    { reduced: true, duration: 150 },
+    { reduced: true, duration: 350 },
   ])(
-    'prepares the homepage under the loader and unlocks it after $duration ms exit',
+    'prepares the homepage under the loader and unlocks it after $duration ms exit with reduced motion=$reduced',
     async ({ reduced, duration }) => {
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
       vi.spyOn(window, 'matchMedia').mockImplementation(
@@ -405,22 +406,16 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     }
   )
 
-  test('particle ribbon draws a dense moving band and cleans up animation on unmount', () => {
+  test('forced particle ribbon keeps moving with reduced motion and cleans up on unmount', () => {
     const frames: FrameRequestCallback[] = []
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       frames.push(callback)
       return frames.length
     })
     vi.spyOn(performance, 'now').mockReturnValue(0)
-    let changeMotion: ((event: MediaQueryListEvent) => void) | undefined
     vi.spyOn(window, 'matchMedia').mockReturnValue({
-      matches: false,
-      addEventListener: (
-        _event: string,
-        listener: (event: MediaQueryListEvent) => void
-      ) => {
-        changeMotion = listener
-      },
+      matches: true,
+      addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     } as unknown as MediaQueryList)
     const mockCtx = {
@@ -449,6 +444,7 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     expect(getByTestId('mowan-loader-ribbon-front')).toBeInTheDocument()
     expect(getByTestId('center-logo')).toBeInTheDocument()
 
+    expect(frames).toHaveLength(1)
     act(() => frames[0](0))
     expect(mockCtx.arc.mock.calls.length).toBeGreaterThan(100)
     const initialPositions = [...mockCtx.arc.mock.calls]
@@ -457,17 +453,10 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     expect(mockCtx.arc.mock.calls).not.toEqual(initialPositions)
     expect(mockCtx.stroke).toHaveBeenCalled()
 
-    expect(changeMotion).toBeDefined()
-    mockCtx.arc.mockClear()
-    act(() => changeMotion?.({ matches: true } as MediaQueryListEvent))
-    expect(cancelSpy).toHaveBeenCalledWith(3)
-    expect(mockCtx.arc).toHaveBeenCalled()
     expect(frames).toHaveLength(3)
-    act(() => changeMotion?.({ matches: false } as MediaQueryListEvent))
-    expect(frames).toHaveLength(4)
 
     unmount()
-    expect(cancelSpy).toHaveBeenCalledWith(4)
+    expect(cancelSpy).toHaveBeenCalledWith(3)
     cancelSpy.mockRestore()
     getContextSpy.mockRestore()
   })
@@ -843,7 +832,7 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     expect(jitterWheel.defaultPrevented).toBe(false)
   })
 
-  test('respects prefers-reduced-motion media query for animation behavior and wheel instant jump', async () => {
+  test('forced effects render particles and smoothly scroll even with reduced motion', async () => {
     vi.mocked(hooks.useHomePageContent).mockReturnValue({
       content: '',
       isLoaded: true,
@@ -852,6 +841,9 @@ describe('Home Page & Mowan AI Landing Feature', () => {
 
     window.innerHeight = 800
     window.scrollY = 0
+    vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(
+      4800
+    )
 
     const scrollToSpy = vi
       .spyOn(window, 'scrollTo')
@@ -879,6 +871,11 @@ describe('Home Page & Mowan AI Landing Feature', () => {
       { i18nInstance: motionI18n }
     )
     await screen.findByRole('heading', { level: 1 })
+    await waitFor(() =>
+      expect(container.querySelector('.xc-beijing canvas')).toHaveClass(
+        'xc-ready'
+      )
+    )
 
     const sections = [
       ...container.querySelectorAll<HTMLElement>('[data-xc-section]'),
@@ -903,7 +900,14 @@ describe('Home Page & Mowan AI Landing Feature', () => {
       })
     })
 
-    // Wheel event triggers instant scroll when reduced motion is preferred
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.spyOn(performance, 'now').mockReturnValue(0)
+    scrollToSpy.mockClear()
+
     const landingContainer = container.querySelector('.mowan-landing')
     const wheelDown = new WheelEvent('wheel', {
       deltaY: 100,
@@ -912,9 +916,18 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     })
     landingContainer?.dispatchEvent(wheelDown)
     expect(wheelDown.defaultPrevented).toBe(true)
-    expect(scrollToSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ behavior: 'instant' })
-    )
+    expect(scrollToSpy).not.toHaveBeenCalled()
+    expect(frames).toHaveLength(1)
+    act(() => frames[0](400))
+    expect(scrollToSpy).toHaveBeenLastCalledWith({
+      top: expect.closeTo(400),
+      behavior: 'instant',
+    })
+    act(() => frames[1](800))
+    expect(scrollToSpy).toHaveBeenLastCalledWith({
+      top: 800,
+      behavior: 'instant',
+    })
 
     const scrollIntoViewSpy = vi.spyOn(sections[1], 'scrollIntoView')
     fireEvent.click(
@@ -922,7 +935,7 @@ describe('Home Page & Mowan AI Landing Feature', () => {
         name: motionI18n.t('mowan.hero.scrollDown'),
       })
     )
-    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: 'auto' })
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: 'smooth' })
   })
 
   test('supports capability clicks in create section and displays localized status feedback', async () => {
@@ -1305,73 +1318,41 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     }
   })
 
-  test('subscribes to prefers-reduced-motion media query changes dynamically at runtime', async () => {
+  test('forced particles stay active when the motion preference changes and clean up on unmount', async () => {
     vi.mocked(hooks.useHomePageContent).mockReturnValue({
       content: '',
       isLoaded: true,
       isUrl: false,
     })
 
-    let motionListener:
-      | ((e: MediaQueryListEvent | MediaQueryList) => void)
-      | null = null
-    const addListenerMock = vi.fn(
-      (
-        event: string,
-        cb: (e: MediaQueryListEvent | MediaQueryList) => void
-      ) => {
-        if (event === 'change') {
-          motionListener = cb
-        }
-      }
-    )
-    const removeListenerMock = vi.fn()
-
-    const matchMediaMock = vi.fn().mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener:
-        query === '(prefers-reduced-motion: reduce)'
-          ? addListenerMock
-          : vi.fn(),
-      removeEventListener: removeListenerMock,
-      dispatchEvent: vi.fn(),
-    }))
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      configurable: true,
-      value: matchMediaMock,
+    let reduced = false
+    const motionQuery = new EventTarget()
+    Object.defineProperty(motionQuery, 'matches', {
+      get: () => reduced,
     })
+    vi.spyOn(window, 'matchMedia').mockReturnValue(
+      motionQuery as MediaQueryList
+    )
 
     const router = createTestRouter()
-    const { unmount } = renderWithProviders(<RouterProvider router={router} />)
-    await screen.findByRole('heading', { level: 1 })
-
-    // Media query listener was registered
-    expect(addListenerMock).toHaveBeenCalledWith('change', expect.any(Function))
-    expect(motionListener).toBeTypeOf('function')
-
-    if (motionListener) {
-      const listener: (e: MediaQueryListEvent | MediaQueryList) => void =
-        motionListener
-      const beforeReduce = globalMockDispose.mock.calls.length
-      act(() => listener({ matches: true } as MediaQueryListEvent))
-      expect(globalMockDispose.mock.calls.length).toBeGreaterThan(beforeReduce)
-
-      const beforeRestart = globalMockDispose.mock.calls.length
-      act(() => listener({ matches: false } as MediaQueryListEvent))
-      act(() => listener({ matches: true } as MediaQueryListEvent))
-      expect(globalMockDispose.mock.calls.length).toBeGreaterThan(beforeRestart)
-    }
-
-    // Cleanup on unmount
-    unmount()
-    expect(removeListenerMock).toHaveBeenCalledWith(
-      'change',
-      expect.any(Function)
+    const { container, unmount } = renderWithProviders(
+      <RouterProvider router={router} />
     )
+    await screen.findByRole('heading', { level: 1 })
+    const canvas = container.querySelector('.xc-beijing canvas')
+    await waitFor(() => expect(canvas).toHaveClass('xc-ready'))
+
+    const beforeChange = globalMockDispose.mock.calls.length
+    act(() => {
+      reduced = true
+      const change = new Event('change')
+      Object.defineProperty(change, 'matches', { value: true })
+      motionQuery.dispatchEvent(change)
+    })
+    expect(canvas).toHaveClass('xc-ready')
+    expect(globalMockDispose.mock.calls.length).toBe(beforeChange)
+
+    unmount()
+    expect(globalMockDispose.mock.calls.length).toBeGreaterThan(beforeChange)
   })
 })
