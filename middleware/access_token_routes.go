@@ -45,6 +45,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/mowan/idatariver/order":   accessTokenScopeRule("wallet:write"),
 	"POST /api/mowan/idatariver/pay":     accessTokenScopeRule("wallet:write"),
 	"POST /api/mowan/idatariver/check":   accessTokenScopeRule("wallet:read"),
+	"POST /api/user/idatariver/pay":      accessTokenScopeRule("wallet:write"),
+	"POST /api/user/idatariver/check":    accessTokenScopeRule("wallet:read"),
 	// router/api-router.go: top level
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),
 	"GET /api/status/test":                accessTokenScopeRule("log:read"),

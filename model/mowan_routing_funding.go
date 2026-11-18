@@ -277,7 +277,7 @@ func InitializeRoutingFundingMode(db *gorm.DB, reviewedEvidence, configuredMode,
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		if err == nil && mode.Mode != "sync_db_v1" {
+		if err == nil && mode.Mode != configuredMode {
 			return ErrRoutingFundingMigrationBlocked
 		}
 		if reviewedEvidence == "" {
@@ -289,7 +289,7 @@ func InitializeRoutingFundingMode(db *gorm.DB, reviewedEvidence, configuredMode,
 		if mode.ID != 0 {
 			return tx.Model(&mode).Update("evidence", reviewedEvidence).Error
 		}
-		return tx.Create(&RoutingFundingMode{ID: 1, Mode: "sync_db_v1", Evidence: reviewedEvidence}).Error
+		return tx.Create(&RoutingFundingMode{ID: 1, Mode: configuredMode, Evidence: reviewedEvidence}).Error
 	})
 }
 
@@ -317,11 +317,18 @@ func ValidateRoutingFundingMode(db *gorm.DB, configuredMode, deploymentID, candi
 }
 
 func validateRoutingFundingDeployment(db *gorm.DB, evidence, configuredMode, deploymentID, candidateCommit string, nodeCount int) error {
-	if configuredMode != "sync_db_v1" || (db.Dialector.Name() == "sqlite" && nodeCount != 1) {
-		return ErrRoutingFundingMigrationBlocked
-	}
 	if err := CheckRoutingFundingPendingBalances(); err != nil {
 		return err
+	}
+	if configuredMode == RoutingFundingPilotMode {
+		pilot, err := ParseRoutingFundingPilotReceipt(evidence, deploymentID, candidateCommit, nodeCount)
+		if err != nil {
+			return err
+		}
+		return validatePilotDatabase(db, pilot)
+	}
+	if configuredMode != "sync_db_v1" || (db.Dialector.Name() == "sqlite" && nodeCount != 1) {
+		return ErrRoutingFundingMigrationBlocked
 	}
 	if err := validateRoutingFundingReceipt(evidence); err != nil {
 		return err

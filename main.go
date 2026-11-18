@@ -57,7 +57,8 @@ func main() {
 	})
 	kitutil.SetSystemErrorLogging(common.SysError)
 
-	err := InitResources()
+	var pilot fundingPilotStartup
+	err := InitResources(&pilot)
 	if err != nil {
 		common.FatalLog(common.LogText("failed to initialize resources: %s", err.Error()))
 		return
@@ -73,6 +74,9 @@ func main() {
 
 	kitutil.Debug.Store(common.DebugEnabled)
 
+	if pilot.lock != nil {
+		defer pilot.close()
+	}
 	defer func() {
 		err := model.CloseDB()
 		if err != nil {
@@ -205,8 +209,8 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: server,
+		Addr:    pilot.listenAddress(port),
+		Handler: pilot.limitHTTP(server),
 	}
 
 	go func() {
@@ -286,7 +290,7 @@ func InjectGoogleAnalytics() {
 	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
 }
 
-func InitResources() error {
+func InitResources(pilot *fundingPilotStartup) error {
 	// Initialize resources here if needed
 	// This is a placeholder function for future resource initialization
 	err := godotenv.Load(".env")
@@ -306,12 +310,6 @@ func InitResources() error {
 
 	service.InitHttpClient()
 
-	// Initialize SQL Database
-	err = model.InitDB()
-	if err != nil {
-		common.FatalLog(common.LogText("failed to initialize database: %s", err.Error()))
-		return err
-	}
 	mode := os.Getenv("MOWAN_FUNDING_MODE")
 	if mode == "" {
 		mode = "sync_db_v1"
@@ -321,6 +319,26 @@ func InitResources() error {
 		return fmt.Errorf("%w: MOWAN_FUNDING_NODE_COUNT must be a positive integer", model.ErrRoutingFundingMigrationBlocked)
 	}
 	deploymentID, candidateCommit := os.Getenv("MOWAN_FUNDING_DEPLOYMENT_ID"), os.Getenv("MOWAN_FUNDING_CANDIDATE_COMMIT")
+	var receipt []byte
+	if common.IsMasterNode {
+		if path := os.Getenv("MOWAN_FUNDING_RECONCILIATION_RECEIPT"); path != "" {
+			receipt, err = os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("read reviewed funding migration receipt: %w", err)
+			}
+			if len(receipt) > 65536 {
+				return errors.New("funding migration receipt exceeds 64 KiB")
+			}
+		}
+	}
+	if mode == model.RoutingFundingPilotMode {
+		if err = pilot.configure(string(receipt), deploymentID, candidateCommit, nodeCount); err != nil {
+			return err
+		}
+	}
+	if err = model.InitDBWithStartupGuard(pilot.acquire); err != nil {
+		return fmt.Errorf("initialize database: %w", err)
+	}
 	if common.IsMasterNode {
 		if err = model.MigrateIdataRiver(model.DB); err != nil {
 			return fmt.Errorf("initialize iDataRiver payment schema: %w", err)
@@ -334,18 +352,8 @@ func InitResources() error {
 		if err = model.MigrateRoutingFunding(model.DB); err != nil {
 			return fmt.Errorf("initialize smart routing funding: %w", err)
 		}
-		var receipt []byte
-		if path := os.Getenv("MOWAN_FUNDING_RECONCILIATION_RECEIPT"); path != "" {
-			receipt, err = os.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("read reviewed funding migration receipt: %w", err)
-			}
-			if len(receipt) > 65536 {
-				return errors.New("funding migration receipt exceeds 64 KiB")
-			}
-		}
 		if err = model.InitializeRoutingFundingMode(model.DB, string(receipt), mode, deploymentID, candidateCommit, nodeCount); err != nil {
-			return fmt.Errorf("funding migration blocked; reviewed reconciliation, old-node isolation and capacity evidence required: %w", err)
+			return fmt.Errorf("funding migration blocked for %s: %w", mode, err)
 		}
 	}
 	if err = model.ValidateRoutingFundingMode(model.DB, mode, deploymentID, candidateCommit, nodeCount); err != nil {

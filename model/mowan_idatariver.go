@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -41,9 +42,60 @@ type IdataRiverOrder struct {
 	PlatformStatus  string  `gorm:"type:varchar(16)" json:"-"`
 	RefundStatus    string  `gorm:"type:varchar(32)" json:"-"`
 	RefundTime      int64   `json:"-"`
+	legacy          bool    `gorm:"-"`
 }
 
 func (IdataRiverOrder) TableName() string { return "mowan_idatariver_orders" }
+
+const legacyIdataRiverTable = "idata_river_orders"
+
+func (s *IdataRiverOrder) IsLegacy() bool { return s.legacy }
+
+// The legacy table has no request ID, contact credential or platform status.
+// It is read in place, never migrated or used for new orders.
+func legacyIdataRiverSnapshot(t *TopUp, s *IdataRiverOrder) {
+	s.legacy, s.UserID, s.Currency, s.Quantity = true, t.UserId, "USD", 1
+	s.CreationState = "unknown"
+	if s.PlatformOrderID != nil && *s.PlatformOrderID != "" {
+		s.CreationState = "associated"
+	}
+	switch {
+	case s.RefundStatus != IdataRiverRefundNone:
+		s.PlatformStatus = "REFUND"
+	case s.CreditedQuota > 0:
+		s.PlatformStatus = "DONE"
+	case t.Status == common.TopUpStatusExpired:
+		s.PlatformStatus = "EXPIRED"
+	}
+}
+
+func findIdataRiverSnapshots(db *gorm.DB, where string, args ...any) ([]IdataRiverOrder, error) {
+	var current []IdataRiverOrder
+	if err := db.Session(&gorm.Session{}).Where(where, args...).Find(&current).Error; err != nil {
+		return nil, err
+	}
+	if !db.Migrator().HasTable(legacyIdataRiverTable) {
+		return current, nil
+	}
+	var legacy []IdataRiverOrder
+	if err := db.Session(&gorm.Session{}).Table(legacyIdataRiverTable).Where(where, args...).Find(&legacy).Error; err != nil {
+		return nil, err
+	}
+	for i := range legacy {
+		legacy[i].legacy = true
+	}
+	return append(current, legacy...), nil
+}
+
+func idataRiverSnapshotForTopUp(s *IdataRiverOrder, t *TopUp) error {
+	if s.legacy {
+		legacyIdataRiverSnapshot(t, s)
+	}
+	if s.UserID != t.UserId {
+		return ErrTopUpNotFound
+	}
+	return nil
+}
 
 func idataRiverDB(ctx context.Context) *gorm.DB {
 	return DB.WithContext(ctx).Session(&gorm.Session{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
@@ -81,7 +133,11 @@ type IdataRiverSummary struct {
 func IdataRiverOrderSummary(topup *TopUp, s *IdataRiverOrder) *IdataRiverSummary {
 	price, _ := decimal.NewFromString(s.PriceUSD)
 	quota, _ := decimal.NewFromString(s.QuotaUSD)
-	return &IdataRiverSummary{TradeNo: s.TradeNo, RequestID: s.RequestID, SKUID: s.SKUID, Name: s.Name, Price: price.InexactFloat64(), Quota: quota.InexactFloat64(), Currency: s.Currency, Status: topup.Status, PlatformStatus: s.PlatformStatus, CreationState: s.CreationState, Credited: s.CreditedQuota > 0, RefundStatus: s.RefundStatus, PaymentMethods: []IdataRiverPaymentMethod{}, CanCheck: true, CanRecreate: s.PlatformStatus == "EXPIRED" && s.RefundStatus == IdataRiverRefundNone && s.CreditedQuota == 0}
+	refundStatus := s.RefundStatus
+	if s.legacy && refundStatus == "refunded_before_credit" {
+		refundStatus = IdataRiverRefundBeforeCredit
+	}
+	return &IdataRiverSummary{TradeNo: s.TradeNo, RequestID: s.RequestID, SKUID: s.SKUID, Name: s.Name, Price: price.InexactFloat64(), Quota: quota.InexactFloat64(), Currency: s.Currency, Status: topup.Status, PlatformStatus: s.PlatformStatus, CreationState: s.CreationState, Credited: s.CreditedQuota > 0, RefundStatus: refundStatus, PaymentMethods: []IdataRiverPaymentMethod{}, CanCheck: !s.legacy || s.CreationState == "associated", CanRecreate: !s.legacy && s.PlatformStatus == "EXPIRED" && s.RefundStatus == IdataRiverRefundNone && s.CreditedQuota == 0}
 }
 
 func PopulateIdataRiverSummaries(ctx context.Context, topups []*TopUp) error {
@@ -94,18 +150,21 @@ func PopulateIdataRiverSummaries(ctx context.Context, topups []*TopUp) error {
 	if len(trades) == 0 {
 		return nil
 	}
-	var snapshots []IdataRiverOrder
-	if err := idataRiverDB(ctx).Where("trade_no IN ?", trades).Find(&snapshots).Error; err != nil {
+	snapshots, err := findIdataRiverSnapshots(idataRiverDB(ctx), "trade_no IN ?", trades)
+	if err != nil {
 		return err
 	}
 	byTrade := make(map[string]*IdataRiverOrder, len(snapshots))
 	for i := range snapshots {
+		if byTrade[snapshots[i].TradeNo] != nil {
+			return ErrTopUpStatusInvalid
+		}
 		byTrade[snapshots[i].TradeNo] = &snapshots[i]
 	}
 	for _, t := range topups {
 		if t.PaymentProvider == PaymentProviderIdataRiver {
 			s := byTrade[t.TradeNo]
-			if s == nil || s.UserID != t.UserId {
+			if s == nil || idataRiverSnapshotForTopUp(s, t) != nil {
 				return ErrTopUpNotFound
 			}
 			t.IdataRiver = IdataRiverOrderSummary(t, s)
@@ -115,21 +174,34 @@ func PopulateIdataRiverSummaries(ctx context.Context, topups []*TopUp) error {
 }
 
 func GetIdataRiverOrder(ctx context.Context, tradeNo, requestID string, userID int) (*TopUp, *IdataRiverOrder, error) {
-	query := idataRiverDB(ctx)
+	db := idataRiverDB(ctx)
+	var s IdataRiverOrder
+	if tradeNo == "" {
+		if requestID == "" || userID <= 0 {
+			return nil, nil, gorm.ErrRecordNotFound
+		}
+		if err := db.Where("request_id = ? AND user_id = ?", requestID, userID).First(&s).Error; err != nil {
+			return nil, nil, err
+		}
+		tradeNo = s.TradeNo
+	}
+	var t TopUp
+	query := db.Where("trade_no = ? AND payment_provider = ?", tradeNo, PaymentProviderIdataRiver)
 	if userID > 0 {
 		query = query.Where("user_id = ?", userID)
 	}
-	if tradeNo != "" {
-		query = query.Where("trade_no = ?", tradeNo)
-	} else {
-		query = query.Where("request_id = ?", requestID)
-	}
-	var s IdataRiverOrder
-	if err := query.First(&s).Error; err != nil {
+	if err := query.First(&t).Error; err != nil {
 		return nil, nil, err
 	}
-	var t TopUp
-	if err := idataRiverDB(ctx).Where("trade_no = ? AND user_id = ? AND payment_provider = ?", s.TradeNo, s.UserID, PaymentProviderIdataRiver).First(&t).Error; err != nil {
+	snapshots, err := findIdataRiverSnapshots(db, "trade_no = ?", tradeNo)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(snapshots) != 1 || (requestID != "" && snapshots[0].RequestID != requestID) {
+		return nil, nil, ErrTopUpStatusInvalid
+	}
+	s = snapshots[0]
+	if err = idataRiverSnapshotForTopUp(&s, &t); err != nil {
 		return nil, nil, err
 	}
 	return &t, &s, nil
@@ -166,6 +238,13 @@ func AssociateIdataRiverOrder(ctx context.Context, tradeNo, platformID string) e
 	if platformID == "" || len(platformID) > 64 {
 		return ErrTopUpNotFound
 	}
+	boundTrade, err := GetIdataRiverTradeNo(ctx, platformID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	if err == nil && boundTrade != tradeNo {
+		return ErrTopUpStatusInvalid
+	}
 	result := idataRiverDB(ctx).Model(&IdataRiverOrder{}).Where("trade_no = ? AND platform_order_id IS NULL", tradeNo).Updates(map[string]any{"platform_order_id": platformID, "creation_state": "associated"})
 	if result.Error != nil {
 		return result.Error
@@ -184,9 +263,18 @@ func AssociateIdataRiverOrder(ctx context.Context, tradeNo, platformID string) e
 }
 
 func GetIdataRiverTradeNo(ctx context.Context, platformID string) (string, error) {
-	var s IdataRiverOrder
-	err := idataRiverDB(ctx).Where("platform_order_id = ?", platformID).First(&s).Error
-	return s.TradeNo, err
+	snapshots, err := findIdataRiverSnapshots(idataRiverDB(ctx), "platform_order_id = ?", platformID)
+	if err != nil {
+		return "", err
+	}
+	switch len(snapshots) {
+	case 0:
+		return "", gorm.ErrRecordNotFound
+	case 1:
+		return snapshots[0].TradeNo, nil
+	default:
+		return "", ErrTopUpStatusInvalid
+	}
 }
 
 func GetIdataRiverTradeNoByContact(ctx context.Context, contact string) (string, error) {
@@ -199,7 +287,7 @@ func GetIdataRiverTradeNoByContact(ctx context.Context, contact string) (string,
 // SQL CAS protects SQLite as well as row-locking MySQL/PostgreSQL. No external
 // network call is made while holding rows. Lock order is User, TopUp, order.
 func ReconcileIdataRiverOrder(ctx context.Context, tradeNo, platformID, status, callerIP string) error {
-	if status != "NEW" && status != "DONE" && status != "EXPIRED" && status != "REFUND" {
+	if platformID == "" || (status != "NEW" && status != "DONE" && status != "EXPIRED" && status != "REFUND") {
 		return ErrTopUpStatusInvalid
 	}
 	var t TopUp
@@ -220,14 +308,37 @@ func ReconcileIdataRiverOrder(ctx context.Context, tradeNo, platformID, status, 
 		if t.UserId != owner.UserId {
 			return ErrTopUpStatusInvalid
 		}
-		if err := lockForUpdate(tx).Where("trade_no = ? AND platform_order_id = ? AND user_id = ?", tradeNo, platformID, t.UserId).First(&s).Error; err != nil {
+		snapshots, err := findIdataRiverSnapshots(lockForUpdate(tx), "trade_no = ? OR platform_order_id = ?", tradeNo, platformID)
+		if err != nil {
 			return err
+		}
+		if len(snapshots) != 1 || snapshots[0].TradeNo != tradeNo || snapshots[0].PlatformOrderID == nil || *snapshots[0].PlatformOrderID != platformID {
+			return ErrTopUpStatusInvalid
+		}
+		s = snapshots[0]
+		if err = idataRiverSnapshotForTopUp(&s, &t); err != nil {
+			return err
+		}
+		table := s.TableName()
+		if s.legacy {
+			table = legacyIdataRiverTable
+		}
+		orderRow := func() *gorm.DB { return tx.Table(table).Where("trade_no = ?", tradeNo) }
+		withStatus := func(values map[string]any) map[string]any {
+			if !s.legacy {
+				values["platform_status"] = status
+			}
+			return values
 		}
 		if s.RefundStatus != IdataRiverRefundNone {
 			return nil
 		}
 		if s.Quota <= 0 || s.Quota > common.MaxWalletQuota {
 			return ErrInvalidTopUpQuota
+		}
+		// Disputed legacy rows are not opening-balance adjustments.
+		if s.legacy && ((s.CreditedQuota != 0 && s.CreditedQuota != s.Quota) || (s.CreditedQuota > 0) != (t.Status == common.TopUpStatusSuccess)) {
+			return ErrTopUpStatusInvalid
 		}
 		switch status {
 		case "DONE":
@@ -237,7 +348,7 @@ func ReconcileIdataRiverOrder(ctx context.Context, tradeNo, platformID, status, 
 			if t.Status != common.TopUpStatusPending && t.Status != common.TopUpStatusExpired {
 				return ErrTopUpStatusInvalid
 			}
-			claim := tx.Model(&IdataRiverOrder{}).Where("trade_no = ? AND credited_quota = 0 AND refund_status = ?", tradeNo, IdataRiverRefundNone).Updates(map[string]any{"credited_quota": s.Quota, "platform_status": "DONE"})
+			claim := orderRow().Where("credited_quota = 0 AND refund_status = ?", IdataRiverRefundNone).Updates(withStatus(map[string]any{"credited_quota": s.Quota}))
 			if claim.Error != nil {
 				return claim.Error
 			}
@@ -255,16 +366,24 @@ func ReconcileIdataRiverOrder(ctx context.Context, tradeNo, platformID, status, 
 			if s.CreditedQuota > 0 {
 				return nil
 			}
+			if s.legacy && t.Status != common.TopUpStatusPending {
+				return nil
+			}
 			if err := tx.Model(&t).Update("status", common.TopUpStatusExpired).Error; err != nil {
 				return err
 			}
-			return tx.Model(&s).Update("platform_status", "EXPIRED").Error
+			if !s.legacy {
+				return orderRow().Update("platform_status", "EXPIRED").Error
+			}
 		case "NEW":
-			if s.PlatformStatus == "" || s.PlatformStatus == "NEW" {
-				return tx.Model(&s).Update("platform_status", "NEW").Error
+			if !s.legacy && (s.PlatformStatus == "" || s.PlatformStatus == "NEW") {
+				return orderRow().Update("platform_status", "NEW").Error
 			}
 		case "REFUND":
 			refundStatus := IdataRiverRefundBeforeCredit
+			if s.legacy {
+				refundStatus = "refunded_before_credit"
+			}
 			if s.CreditedQuota > 0 {
 				if s.CreditedQuota != s.Quota {
 					return ErrInvalidTopUpQuota
@@ -278,12 +397,17 @@ func ReconcileIdataRiverOrder(ctx context.Context, tradeNo, platformID, status, 
 					refundStatus = IdataRiverRefundRecovered
 				}
 			}
-			claim := tx.Model(&IdataRiverOrder{}).Where("trade_no = ? AND refund_status = ?", tradeNo, IdataRiverRefundNone).Updates(map[string]any{"refund_status": refundStatus, "refund_time": common.GetTimestamp(), "platform_status": "REFUND"})
+			claim := orderRow().Where("refund_status = ?", IdataRiverRefundNone).Updates(withStatus(map[string]any{"refund_status": refundStatus, "refund_time": common.GetTimestamp()}))
 			if claim.Error != nil {
 				return claim.Error
 			}
 			if claim.RowsAffected != 1 {
 				return ErrTopUpStatusInvalid
+			}
+			if s.legacy && s.CreditedQuota == 0 {
+				if err := tx.Model(&t).Update("status", common.TopUpStatusExpired).Error; err != nil {
+					return err
+				}
 			}
 			refundRecorded = true
 			s.RefundStatus = refundStatus

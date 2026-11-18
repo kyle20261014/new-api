@@ -184,6 +184,11 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 }
 
 func InitDB() (err error) {
+	return InitDBWithStartupGuard(nil)
+}
+
+// InitDBWithStartupGuard runs the optional deployment fence before any schema write.
+func InitDBWithStartupGuard(guard func(*gorm.DB) error) (err error) {
 	db, dbType, err := chooseDB("SQL_DSN", false)
 	if err == nil {
 		common.SetMainDatabaseType(dbType)
@@ -201,9 +206,6 @@ func InitDB() (err error) {
 				panic(err)
 			}
 		}
-		if err := ensureUserQuotaColumns(DB, common.MainDatabaseType()); err != nil {
-			return err
-		}
 		sqlDB, err := DB.DB()
 		if err != nil {
 			return err
@@ -211,6 +213,14 @@ func InitDB() (err error) {
 		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
 		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
 		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+		if guard != nil {
+			if err := guard(DB); err != nil {
+				return err
+			}
+		}
+		if err := ensureUserQuotaColumns(DB, common.MainDatabaseType()); err != nil {
+			return err
+		}
 
 		if !common.IsMasterNode {
 			// Only the master node migrates. A node that cannot read the deadline

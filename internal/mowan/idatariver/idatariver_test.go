@@ -217,8 +217,13 @@ func mockRemote(t *testing.T, db *gorm.DB) *remote {
 			var body map[string]any
 			require.NoError(t, common.DecodeJson(req.Body, &body))
 			assert.Equal(t, "crypto", body["method"])
-			assert.Contains(t, body["redirectUrl"], "https://wallet.example.com/wallet?trade_no=idr-")
-			assert.Equal(t, "https://wallet.example.com/api/mowan/idatariver/notify", body["callbackUrl"])
+			if strings.HasPrefix(body["id"].(string), "legacy-") {
+				assert.Contains(t, body["redirectUrl"], "https://wallet.example.com/wallet?trade_no=IDR")
+				assert.Equal(t, "https://wallet.example.com/api/user/idatariver/notify", body["callbackUrl"])
+			} else {
+				assert.Contains(t, body["redirectUrl"], "https://wallet.example.com/wallet?trade_no=idr-")
+				assert.Equal(t, "https://wallet.example.com/api/mowan/idatariver/notify", body["callbackUrl"])
+			}
 			if r.failPay {
 				return nil, errors.New("secret-must-not-appear")
 			}
@@ -284,6 +289,103 @@ func setRemoteStatus(r *remote, status string) {
 	defer r.mu.Unlock()
 	for _, o := range r.orders {
 		o["status"] = status
+	}
+}
+
+func TestIdataRiverLegacyOrders(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := fixture(t, dialect)
+			require.NoError(t, db.Exec(`CREATE TABLE IF NOT EXISTS idata_river_orders (
+ trade_no varchar(64) PRIMARY KEY, platform_order_id varchar(64) UNIQUE,
+ merchant_id varchar(24), project_id varchar(24), sk_uid varchar(24),
+ price_usd varchar(64), quota_usd varchar(64), quota bigint, credited_quota bigint,
+ callback_origin varchar(255), refund_status varchar(32), refund_time bigint)`).Error)
+			owner := testUser(t, db, 0)
+			other := testUser(t, db, 0)
+			r := mockRemote(t, db)
+			prefix := common.GetRandomString(12)
+			trade, id := "IDR"+prefix, "legacy-"+prefix
+			seed := func(trade string, platform *string) {
+				t.Helper()
+				order := &model.TopUp{UserId: owner.Id, TradeNo: trade, PaymentProvider: model.PaymentProviderIdataRiver, PaymentMethod: model.PaymentProviderIdataRiver, Status: common.TopUpStatusPending}
+				require.NoError(t, db.Create(order).Error)
+				require.NoError(t, db.Table("idata_river_orders").Create(map[string]any{"trade_no": trade, "platform_order_id": platform, "merchant_id": testMerchant, "project_id": testProject, "sk_uid": testSKU, "price_usd": "10", "quota_usd": "10.25", "quota": testQuota, "credited_quota": 0, "callback_origin": "https://wallet.example.com", "refund_status": "none", "refund_time": 0}).Error)
+				t.Cleanup(func() { require.NoError(t, db.Exec("DELETE FROM idata_river_orders WHERE trade_no = ?", trade).Error) })
+			}
+			seed(trade, &id)
+			seed(trade+"unbound", nil)
+			seed(trade+"unpaid", new(id+"-unpaid"))
+			seed(trade+"credited", new(id+"-credited"))
+			require.NoError(t, db.Table("idata_river_orders").Where("trade_no = ?", trade+"credited").Update("credited_quota", testQuota).Error)
+			require.NoError(t, db.Model(&model.TopUp{}).Where("trade_no = ?", trade+"credited").Update("status", common.TopUpStatusSuccess).Error)
+			newTrade, _ := create(t, owner.Id, "new-"+prefix)
+			var history []*model.TopUp
+			require.NoError(t, db.Where("user_id = ?", owner.Id).Find(&history).Error)
+			require.Len(t, history, 5)
+			require.NoError(t, model.PopulateIdataRiverSummaries(t.Context(), history))
+			for _, row := range history {
+				require.NotNil(t, row.IdataRiver)
+			}
+			r.orders[id] = map[string]any{"id": id, "status": "NEW", "merchant": testMerchant, "contactInfo": "legacy-private", "project": map[string]any{"id": testProject}, "sku": map[string]any{"id": testSKU}, "quantity": 1, "oriPrice": 10, "price": 10}
+			r.orders[id+"-unpaid"] = maps.Clone(r.orders[id])
+			r.orders[id+"-unpaid"]["id"] = id + "-unpaid"
+			r.orders[id+"-unpaid"]["status"] = "REFUND"
+			r.orders[id+"-credited"] = maps.Clone(r.orders[id])
+			r.orders[id+"-credited"]["id"] = id + "-credited"
+			r.orders[id+"-credited"]["status"] = "DONE"
+			body := `{"trade_no":"` + trade + `"}`
+			gets := r.gets
+			_, denied := call(Check, other.Id, body)
+			assert.Equal(t, false, denied["success"])
+			unbound := check(t, owner.Id, trade+"unbound")
+			assert.Equal(t, false, unbound["can_recreate"])
+			assert.Equal(t, false, unbound["can_check"])
+			assert.Equal(t, gets, r.gets)
+			assert.Equal(t, true, check(t, owner.Id, trade)["can_pay"])
+			w, pay := call(Pay, owner.Id, `{"trade_no":"`+trade+`","method":"crypto"}`)
+			require.Equal(t, true, pay["success"], w.Body.String())
+			assert.Contains(t, w.Body.String(), r.payURL)
+			assert.NotContains(t, w.Body.String(), "legacy-private")
+			notify := func(want int, body string) {
+				t.Helper()
+				w, _ := call(LegacyNotify, 0, body)
+				require.Equal(t, want, w.Code, w.Body.String())
+			}
+			notify(400, `{"code":1,"result":{"id":"`+id+`"}}`)
+			notify(200, `{"id":"`+id+`","status":"DONE"}`)
+			assert.Zero(t, quota(t, db, owner.Id), "callback status is not authoritative")
+			notify(200, `{"id":"`+id+`-credited"}`)
+			assert.Zero(t, quota(t, db, owner.Id), "opening balance does not get a second historical credit")
+			require.NoError(t, db.Model(&model.TopUp{}).Where("trade_no = ?", trade+"credited").Update("status", common.TopUpStatusPending).Error)
+			notify(503, `{"id":"`+id+`-credited"}`)
+			assert.Zero(t, quota(t, db, owner.Id), "inconsistent history is not repaired by an anonymous callback")
+			r.orders[id]["status"] = "DONE"
+			r.orders[id]["price"] = 9
+			notify(503, `{"id":"`+id+`"}`)
+			assert.Zero(t, quota(t, db, owner.Id))
+			r.orders[id]["price"] = 10
+			for range 2 {
+				notify(200, `{"code":0,"result":{"id":"`+id+`"}}`)
+			}
+			assert.Equal(t, testQuota, quota(t, db, owner.Id))
+			r.orders[id]["status"] = "REFUND"
+			for range 2 {
+				notify(200, `{"id":"`+id+`","event":"ORDER_REFUND"}`)
+			}
+			notify(200, `{"id":"`+id+`-unpaid"}`)
+			r.orders[id+"-unpaid"]["status"] = "DONE"
+			notify(200, `{"id":"`+id+`-unpaid"}`)
+			assert.Zero(t, quota(t, db, owner.Id))
+			assert.Equal(t, model.IdataRiverRefundRecovered, check(t, owner.Id, trade)["refund_status"])
+			assert.Equal(t, model.IdataRiverRefundBeforeCredit, check(t, owner.Id, trade+"unpaid")["refund_status"])
+			assert.Error(t, model.AssociateIdataRiverOrder(t.Context(), newTrade, id), "a platform ID cannot belong to both order generations")
+			assert.Equal(t, 1, r.adds, "legacy paths never create platform orders")
+			assert.Equal(t, 1, r.pays)
+			require.NoError(t, model.MigrateIdataRiver(db))
+			assert.False(t, db.Migrator().HasColumn("idata_river_orders", "request_id"))
+			assert.False(t, db.Migrator().HasColumn("idata_river_orders", "contact_info"))
+		})
 	}
 }
 

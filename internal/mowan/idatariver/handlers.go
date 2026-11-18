@@ -43,8 +43,11 @@ func projection(t *model.TopUp, s *model.IdataRiverOrder, info *orderInfo, query
 	if queryError || info == nil {
 		return view
 	}
+	if s.IsLegacy() && t.Status == common.TopUpStatusPending && s.RefundStatus == model.IdataRiverRefundNone && s.CreditedQuota == 0 && info.Status == "NEW" {
+		view.PlatformStatus = "NEW"
+	}
 	cfg := setting.GetIdataRiverConfig()
-	view.CanPay = paymentEnabled(cfg) && t.Status == common.TopUpStatusPending && s.PlatformOrderID != nil && s.CreationState == "associated" && s.PlatformStatus == "NEW" && s.CreditedQuota == 0 && s.RefundStatus == model.IdataRiverRefundNone
+	view.CanPay = paymentEnabled(cfg) && t.Status == common.TopUpStatusPending && s.PlatformOrderID != nil && s.CreationState == "associated" && view.PlatformStatus == "NEW" && s.CreditedQuota == 0 && s.RefundStatus == model.IdataRiverRefundNone
 	if view.CanPay {
 		for _, p := range info.Payments {
 			if p.Enabled && p.Method != "" && len(p.Method) <= 64 && len(p.Name) <= 200 {
@@ -72,6 +75,9 @@ func refresh(ctx context.Context, cfg setting.IdataRiverConfig, t *model.TopUp, 
 	api := client{key: cfg.APIKey}
 	var info *orderInfo
 	var err error
+	if s.IsLegacy() && s.CreationState != "associated" {
+		return nil, common.NewMessage("iDataRiver order not found")
+	}
 	if s.PlatformOrderID == nil {
 		info, err = api.recoverOrder(ctx, s)
 	} else {
@@ -280,6 +286,14 @@ func Pay(c *gin.Context) {
 }
 
 func Notify(c *gin.Context) {
+	notify(c, false)
+}
+
+func LegacyNotify(c *gin.Context) {
+	notify(c, true)
+}
+
+func notify(c *gin.Context, legacyEndpoint bool) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 4*time.Second)
 	defer cancel()
 	// Notify is public. Read only a bounded ID; status and every other field in
@@ -287,6 +301,8 @@ func Notify(c *gin.Context) {
 	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, 65537))
 	var payload struct {
 		ID     string `json:"id"`
+		Code   *int   `json:"code"`
+		Event  string `json:"event"`
 		Result *struct {
 			ID string `json:"id"`
 		} `json:"result"`
@@ -296,6 +312,10 @@ func Notify(c *gin.Context) {
 		return
 	}
 	id := payload.ID
+	if (payload.Code != nil && (*payload.Code != 0 || payload.Result == nil)) || (legacyEndpoint && payload.Result != nil && payload.Code == nil) {
+		c.Status(http.StatusBadRequest)
+		return
+	}
 	if payload.Result != nil {
 		if id != "" && id != payload.Result.ID {
 			c.Status(http.StatusBadRequest)
@@ -305,6 +325,10 @@ func Notify(c *gin.Context) {
 	}
 	if !platformIDPattern.MatchString(id) {
 		c.Status(http.StatusBadRequest)
+		return
+	}
+	if legacyEndpoint && payload.Event != "" && payload.Event != "ORDER_COMPLETED" && payload.Event != "ORDER_REFUND" {
+		c.Status(http.StatusOK)
 		return
 	}
 	info, err := (client{key: setting.GetIdataRiverConfig().APIKey}).getOrder(ctx, id)

@@ -102,7 +102,12 @@ func validDecimal(value *decimal.Decimal) bool {
 
 func (o *orderInfo) verify(s *model.IdataRiverOrder) error {
 	price, err := decimal.NewFromString(s.PriceUSD)
-	if err != nil || !validDecimal(&price) || s.Currency != "USD" || s.Quantity != 1 || !platformIDPattern.MatchString(o.ID) || (s.PlatformOrderID != nil && o.ID != *s.PlatformOrderID) || o.Merchant != s.MerchantID || o.Project.ID != s.ProjectID || o.SKU.ID != s.SKUID || o.ContactInfo != s.ContactInfo || o.Quantity != s.Quantity || !validDecimal(o.OriginalPrice) || !validDecimal(o.Price) || !o.OriginalPrice.Equal(price) || !o.Price.Equal(price) || (o.Currency != "" && o.Currency != "USD") || o.ProjectType != "DIGITAL" || o.Project.Type != "DIGITAL" || !slices.Contains([]string{"NEW", "DONE", "EXPIRED", "REFUND"}, o.Status) {
+	validBinding := o.ContactInfo == s.ContactInfo && o.ProjectType == "DIGITAL" && o.Project.Type == "DIGITAL"
+	if s.IsLegacy() {
+		// The old merchant client did not persist contactInfo or require type fields.
+		validBinding = s.PlatformOrderID != nil && (o.ProjectType == "" || o.ProjectType == "DIGITAL") && (o.Project.Type == "" || o.Project.Type == "DIGITAL")
+	}
+	if err != nil || !validDecimal(&price) || !validBinding || s.Currency != "USD" || s.Quantity != 1 || !platformIDPattern.MatchString(o.ID) || (s.PlatformOrderID != nil && o.ID != *s.PlatformOrderID) || s.MerchantID == "" || s.ProjectID == "" || s.SKUID == "" || o.Merchant != s.MerchantID || o.Project.ID != s.ProjectID || o.SKU.ID != s.SKUID || o.Quantity != s.Quantity || !validDecimal(o.OriginalPrice) || !validDecimal(o.Price) || !o.OriginalPrice.Equal(price) || !o.Price.Equal(price) || (o.Currency != "" && o.Currency != "USD") || !slices.Contains([]string{"NEW", "DONE", "EXPIRED", "REFUND"}, o.Status) {
 		return common.NewMessage("iDataRiver order does not match the saved order")
 	}
 	// The merchant API defines fixed DIGITAL product prices in USD; currency
@@ -235,8 +240,15 @@ type payInfo struct {
 }
 
 func (c client) pay(ctx context.Context, s *model.IdataRiverOrder, method string) (*payInfo, error) {
+	if s.PlatformOrderID == nil || setting.ValidateIdataRiverOrigin(s.CallbackOrigin) != nil {
+		return nil, common.NewMessage("Invalid iDataRiver payment link")
+	}
+	callback := "/api/mowan/idatariver/notify"
+	if s.IsLegacy() {
+		callback = "/api/user/idatariver/notify"
+	}
 	var result payInfo
-	err := c.request(ctx, http.MethodPost, "/mapi/order/pay", map[string]any{"id": *s.PlatformOrderID, "method": method, "redirectUrl": s.CallbackOrigin + "/wallet?trade_no=" + url.QueryEscape(s.TradeNo), "callbackUrl": s.CallbackOrigin + "/api/mowan/idatariver/notify"}, &result)
+	err := c.request(ctx, http.MethodPost, "/mapi/order/pay", map[string]any{"id": *s.PlatformOrderID, "method": method, "redirectUrl": s.CallbackOrigin + "/wallet?trade_no=" + url.QueryEscape(s.TradeNo), "callbackUrl": s.CallbackOrigin + callback}, &result)
 	if err != nil {
 		return nil, err
 	}
