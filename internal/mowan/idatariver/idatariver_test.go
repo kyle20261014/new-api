@@ -741,3 +741,27 @@ func TestIdataRiverSettingsValidation(t *testing.T) {
 	assert.Equal(t, []any{}, result["data"].(map[string]any)["products"])
 	t.Log(fmt.Sprintf("settings fail closed; empty key preserves saved secret; empty lists stay arrays"))
 }
+
+func TestIdataRiverLegacyConfigurationRequiresExplicitIdentityAndCompliance(t *testing.T) {
+	fixture(t, "sqlite")
+	common.OptionMapRWMutex.Lock()
+	for _, key := range []string{"IdataRiverMerchantId", "IdataRiverProjectId", "IdataRiverCallbackOrigin"} {
+		delete(common.OptionMap, key)
+	}
+	common.OptionMapRWMutex.Unlock()
+	require.False(t, paymentEnabled(setting.GetIdataRiverConfig()), "legacy three-key options must not silently acquire a production identity")
+	require.NoError(t, model.UpdateOptionsBulk(map[string]string{
+		"IdataRiverEnabled":        "false",
+		"IdataRiverMerchantId":     testMerchant,
+		"IdataRiverProjectId":      testProject,
+		"IdataRiverCallbackOrigin": "https://wallet.example.com",
+	}))
+	require.NoError(t, model.UpdateOption("IdataRiverEnabled", "true"))
+	operation_setting.GetPaymentSetting().ComplianceConfirmed = false
+	require.False(t, paymentEnabled(setting.GetIdataRiverConfig()))
+	operation_setting.GetPaymentSetting().ComplianceConfirmed = true
+	operation_setting.GetPaymentSetting().ComplianceTermsVersion = "outdated"
+	require.False(t, paymentEnabled(setting.GetIdataRiverConfig()))
+	operation_setting.GetPaymentSetting().ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+	require.True(t, paymentEnabled(setting.GetIdataRiverConfig()))
+}

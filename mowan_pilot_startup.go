@@ -18,10 +18,11 @@ import (
 var fundingPilotBuildCommit string
 
 type fundingPilotStartup struct {
-	receipt model.RoutingFundingPilotReceipt
-	lock    *model.RoutingFundingPilotLock
-	stop    context.CancelFunc
-	done    chan struct{}
+	receipt  model.RoutingFundingPilotReceipt
+	lock     *model.RoutingFundingPilotLock
+	stop     context.CancelFunc
+	done     chan struct{}
+	hostHeld bool
 }
 
 func pilotBuildCommit() string {
@@ -48,12 +49,22 @@ func (p *fundingPilotStartup) configure(raw, deployment, commit string, nodes in
 	}
 	var err error
 	p.receipt, err = model.ParseRoutingFundingPilotReceipt(raw, deployment, commit, nodes)
-	return err
+	if err != nil {
+		return err
+	}
+	if err = acquirePilotHostLock(); err != nil {
+		return fmt.Errorf("%w: %v", model.ErrRoutingFundingMigrationBlocked, err)
+	}
+	p.hostHeld = true
+	return nil
 }
 
 func (p *fundingPilotStartup) acquire(db *gorm.DB) error {
 	if p.receipt.Mode != model.RoutingFundingPilotMode {
 		return nil
+	}
+	if !p.hostHeld {
+		return fmt.Errorf("%w: pilot host writer lock is required before database startup", model.ErrRoutingFundingMigrationBlocked)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

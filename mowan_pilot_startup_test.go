@@ -48,3 +48,8 @@ func TestFundingPilotRejectsBatchAndWrongBuild(t *testing.T) {
 	t.Setenv("BATCH_UPDATE_ENABLED", "false")
 	require.ErrorIs(t, p.configure("", "test", "wrong-build", 1), model.ErrRoutingFundingMigrationBlocked)
 }
+
+func TestFundingPilotRequiresHostFenceBeforeDatabase(t *testing.T) {
+	p := fundingPilotStartup{receipt: model.RoutingFundingPilotReceipt{Mode: model.RoutingFundingPilotMode}}
+	require.ErrorIs(t, p.acquire(nil), model.ErrRoutingFundingMigrationBlocked)
+}
