@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Dialog } from '@/components/dialog'
+import { ErrorState } from '@/components/error-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -22,8 +24,6 @@ export function FixedPackages({
 }) {
   const { t, i18n } = useTranslation()
   const language = i18n.resolvedLanguage || i18n.language
-  const needsSKU =
-    flow.lookup && 'request_id' in flow.lookup && !flow.lookup.sku_id
   if (
     !flow.loading &&
     !flow.catalogError &&
@@ -59,7 +59,7 @@ export function FixedPackages({
               key={product.sku_id}
               variant='outline'
               className='h-auto flex-col items-start p-3 text-start whitespace-normal'
-              disabled={flow.busy || (!!flow.lookup && !needsSKU)}
+              disabled={flow.busy}
               onClick={() => onSelect(product)}
             >
               <span>{product.name}</span>
@@ -116,17 +116,52 @@ export function FixedPaymentDialog({
         ? t('Refund requires manual review')
         : t('Refunded')
   }
+  if (flow.order?.can_pay && !methods.length) {
+    status = t('No payment methods available')
+  }
+  const onOpenChange = (open: boolean) => {
+    flow.setOpen(open)
+    if (!open) onClear()
+  }
+  if (!creating && (!flow.order?.can_pay || !currentMethod || flow.error)) {
+    return (
+      <Dialog
+        open={flow.open}
+        onOpenChange={onOpenChange}
+        title={t('Check Status')}
+        showCloseButton={false}
+        contentClassName='sm:max-w-md'
+        footer={
+          <Button variant='outline' onClick={() => onOpenChange(false)}>
+            {t('Close')}
+          </Button>
+        }
+      >
+        <div aria-live='polite'>
+          {flow.busy && <p role='status'>{t('Loading...')}</p>}
+          {!flow.busy && flow.error && (
+            <ErrorState
+              className='min-h-0'
+              title={t('Unable to confirm payment. Your order is preserved.')}
+              onRetry={() => {
+                if (!flow.order && retrySKU) {
+                  void flow.create({ sku_id: retrySKU }, true)
+                } else if (flow.order) {
+                  void flow.query({ trade_no: flow.order.trade_no })
+                } else if (flow.lookup) void flow.query(flow.lookup)
+              }}
+            />
+          )}
+          {!flow.busy && !flow.error && <p role='status'>{status}</p>}
+        </div>
+      </Dialog>
+    )
+  }
   return (
     <PaymentConfirmDialog
       open={flow.open}
-      onOpenChange={(open) => {
-        flow.setOpen(open)
-        if (!open) onClear()
-      }}
+      onOpenChange={onOpenChange}
       processing={flow.busy}
-      confirmDisabled={
-        !creating && (!flow.order?.can_pay || !currentMethod || flow.error)
-      }
       confirmLabel={flow.payment ? t('Continue to payment') : t('Continue')}
       onConfirm={() => {
         if (creating && selected) void flow.create(selected)
@@ -162,19 +197,7 @@ export function FixedPaymentDialog({
           {flow.order && (
             <p className='text-xs break-all'>{flow.order.trade_no}</p>
           )}
-          <div aria-live='polite' className='space-y-2'>
-            {flow.error ? (
-              <Alert>
-                <AlertDescription>
-                  {flow.order
-                    ? t('Unable to confirm payment. Your order is preserved.')
-                    : t('Request failed')}
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <p>{status}</p>
-            )}
-          </div>
+          <p role='status'>{status}</p>
           {flow.order?.can_pay && !flow.error && (
             <fieldset className='space-y-2'>
               <legend className='mb-2 text-sm'>{t('Payment Method')}</legend>
@@ -207,27 +230,6 @@ export function FixedPaymentDialog({
               onClick={() => flow.lookup && void flow.query(flow.lookup)}
             >
               {t('Check Status')}
-            </Button>
-          )}
-          {!flow.order && retrySKU && (
-            <Button
-              variant='outline'
-              disabled={flow.busy}
-              onClick={() => void flow.create({ sku_id: retrySKU }, true)}
-            >
-              {t('Retry')}
-            </Button>
-          )}
-          {flow.order?.can_recreate && (
-            <Button
-              variant='outline'
-              disabled={flow.busy}
-              onClick={() => {
-                flow.setOpen(false)
-                onClear()
-              }}
-            >
-              {t('Choose another package')}
             </Button>
           )}
         </div>

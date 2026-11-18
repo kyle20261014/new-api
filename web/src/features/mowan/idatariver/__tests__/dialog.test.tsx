@@ -210,7 +210,7 @@ it.each([0.0002, 1e-30, Number.MIN_VALUE])(
   }
 )
 
-it('recovers an older saved request without a SKU using the same request ID', async () => {
+it('keeps an older saved request without a SKU from taking over a newly chosen purchase', async () => {
   localStorage.setItem(
     'mowan-idr:v1:1',
     JSON.stringify({ request_id: 'older-attempt' })
@@ -218,18 +218,17 @@ it('recovers an older saved request without a SKU using the same request ID', as
   vi.mocked(api.check).mockResolvedValue({ success: false })
   const user = userEvent.setup()
   render(<WalletPayment />)
-  const cancel = await screen.findByRole('button', { name: 'Cancel' })
-  await waitFor(() => expect(cancel).toBeEnabled())
-  await user.click(cancel)
   const button = await screen.findByRole('button', { name: /Ten/ })
-  await waitFor(() => expect(button).toBeEnabled())
+  expect(button).toBeEnabled()
+  expect(api.check).not.toHaveBeenCalled()
   await user.click(button)
   vi.mocked(api.check).mockResolvedValue({ success: true, data: order })
-  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
   expect(api.create).toHaveBeenCalledExactlyOnceWith(
     product.sku_id,
-    'older-attempt'
+    expect.any(String)
   )
+  expect(vi.mocked(api.create).mock.calls[0][1]).not.toBe('older-attempt')
 })
 
 it('keeps unknown payment amounts distinct from zero', () => {
@@ -259,14 +258,12 @@ it('keeps unknown payment amounts distinct from zero', () => {
 it.each([0.0002, 72, null])(
   'waits for explicit navigation after displaying channel amount %s',
   async (amount) => {
-    useSystemConfigStore
-      .getState()
-      .setConfig(
-        mapStatusDataToConfig({
-          quota_display_type: 'CNY',
-          usd_exchange_rate: 7.25,
-        })
-      )
+    useSystemConfigStore.getState().setConfig(
+      mapStatusDataToConfig({
+        quota_display_type: 'CNY',
+        usd_exchange_rate: 7.25,
+      })
+    )
     vi.mocked(api.pay).mockResolvedValue({
       success: true,
       data: {
@@ -334,7 +331,7 @@ it('uses the restored USD snapshot instead of the currently selected product for
 })
 
 it.each(['DONE', 'EXPIRED', 'REFUND', 'no channels'] as const)(
-  'disables payment for restored %s without creating replacements',
+  'shows status instead of payment confirmation for restored %s without creating replacements',
   (state) => {
     const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
     const restored = { ...order, can_pay: false }
@@ -349,7 +346,11 @@ it.each(['DONE', 'EXPIRED', 'REFUND', 'no channels'] as const)(
         onClear={() => {}}
       />
     )
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
+    expect(screen.getByRole('dialog', { name: 'Check Status' })).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Continue' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled()
     expect(api.create).not.toHaveBeenCalled()
   }
 )
@@ -400,4 +401,99 @@ it('clears the old quote when switching channels and fetches the new channel bef
   expect(await screen.findByText('0.0002 BTC')).toBeVisible()
   expect(api.pay).toHaveBeenLastCalledWith(order.trade_no, 'crypto')
   expect(api.create).toHaveBeenCalledTimes(1)
+})
+
+it.each([
+  { trade_no: 'old-unpaid-order' },
+  { request_id: 'old-attempt', sku_id: 'ten' },
+])(
+  'allows a fresh twenty-dollar purchase without querying saved %j',
+  async (saved) => {
+    localStorage.setItem('mowan-idr:v1:1', JSON.stringify(saved))
+    const twenty = {
+      ...product,
+      sku_id: 'twenty',
+      name: 'Twenty',
+      price: 20,
+      quota: 20,
+    }
+    vi.mocked(api.products).mockResolvedValue({
+      success: true,
+      data: { enabled: true, products: [product, twenty] },
+    })
+    vi.mocked(api.check).mockRejectedValue(new Error('old order unavailable'))
+    const user = userEvent.setup()
+    render(<WalletPayment />)
+    const card = await screen.findByRole('button', { name: /Twenty/ })
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(api.check).not.toHaveBeenCalled()
+    expect(card).toBeEnabled()
+    await user.click(card)
+    const dialog = within(screen.getByRole('alertdialog'))
+    expect(dialog.getAllByText('20 USD')).toHaveLength(2)
+    expect(api.create).not.toHaveBeenCalled()
+    vi.mocked(api.create).mockResolvedValue({
+      success: true,
+      data: { ...order, ...twenty, trade_no: 'new-twenty-order' },
+    })
+    vi.mocked(api.check).mockResolvedValue({
+      success: true,
+      data: { ...order, ...twenty, trade_no: 'new-twenty-order' },
+    })
+    await user.click(dialog.getByRole('button', { name: 'Continue' }))
+    expect(api.create).toHaveBeenCalledExactlyOnceWith(
+      'twenty',
+      expect.any(String)
+    )
+    expect(await screen.findByRole('radio', { name: 'Alipay' })).toBeChecked()
+    expect(
+      within(screen.getByRole('alertdialog')).getAllByText('20 USD')
+    ).toHaveLength(2)
+    expect(api.pay).not.toHaveBeenCalled()
+  }
+)
+
+it('shows retry and close instead of payment confirmation when an explicit old-order query fails', async () => {
+  localStorage.setItem(
+    'mowan-idr:v1:1',
+    JSON.stringify({ trade_no: 'old-order' })
+  )
+  vi.mocked(api.check).mockRejectedValue(new Error('order unavailable'))
+  const user = userEvent.setup()
+  render(<WalletPayment />)
+  await user.click(
+    await screen.findByRole('button', { name: 'Resume payment' })
+  )
+  const dialog = within(await screen.findByRole('dialog'))
+  expect(
+    await dialog.findByText(
+      'Unable to confirm payment. Your order is preserved.'
+    )
+  ).toBeVisible()
+  expect(dialog.queryByText('Confirm Payment')).not.toBeInTheDocument()
+  expect(
+    dialog.queryByRole('button', { name: 'Continue' })
+  ).not.toBeInTheDocument()
+  expect(
+    dialog.queryByText(
+      'Payment is completed securely on the official payment page.'
+    )
+  ).not.toBeInTheDocument()
+  await waitFor(() =>
+    expect(dialog.getByRole('button', { name: 'Retry' })).toBeEnabled()
+  )
+  await user.click(dialog.getByRole('button', { name: 'Retry' }))
+  expect(api.check).toHaveBeenCalledWith({ trade_no: 'old-order' })
+  await user.click(dialog.getByRole('button', { name: 'Close' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(await screen.findByRole('button', { name: /Ten/ })).toBeEnabled()
+  expect(api.create).not.toHaveBeenCalled()
+  expect(api.pay).not.toHaveBeenCalled()
 })

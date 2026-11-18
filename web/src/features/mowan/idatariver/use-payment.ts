@@ -159,13 +159,15 @@ export function useIdataRiver(
     const restored = initialTradeNo ? { trade_no: initialTradeNo } : saved
     currentLookup.current = restored ? JSON.stringify(restored) : ''
     setLookup(restored)
-    if (restored && userId) updateOpen(true)
+    if (initialTradeNo && userId) updateOpen(true)
     void load()
   }, [userId, storageKey, initialTradeNo, load, clearPayment])
 
   const lookupId = lookup ? JSON.stringify(lookup) : ''
   useEffect(() => {
-    if (!lookupId || !userId || lookupId !== currentLookup.current) return
+    if (!open || !lookupId || !userId || lookupId !== currentLookup.current) {
+      return
+    }
     const value: OrderLookup = JSON.parse(lookupId)
     let stopped = false
     let tries = 0
@@ -189,7 +191,7 @@ export function useIdataRiver(
       window.removeEventListener('focus', recover)
       document.removeEventListener('visibilitychange', recover)
     }
-  }, [lookupId, query, userId])
+  }, [open, lookupId, query, userId])
 
   const create = async (product: Pick<Product, 'sku_id'>, retry = false) => {
     if (!userId || flight.current) return
@@ -226,6 +228,7 @@ export function useIdataRiver(
     if (flight.current) return
     setOrder(null)
     clearPayment()
+    setError(false)
     setOpen(true)
     save(value)
     await query(value)
@@ -292,6 +295,9 @@ export function useIdataRiver(
   }
 
   const choose = () => {
+    if (flight.current) return
+    // A deliberate package selection starts a new purchase; the old order stays in history.
+    save(null)
     setOrder(null)
     clearPayment()
     setError(false)

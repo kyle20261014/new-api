@@ -13,7 +13,7 @@ afterEach(() => {
   localStorage.clear()
 })
 it.each(['focus', 'visibility'])(
-  'refreshes self and an already open history after trusted settlement through %s recovery',
+  'checks a saved order only on request and refreshes balance and history after trusted %s recovery',
   async (trigger) => {
     let visibility: DocumentVisibilityState = 'visible'
     vi.spyOn(document, 'visibilityState', 'get').mockImplementation(
@@ -106,11 +106,12 @@ it.each(['focus', 'visibility'])(
     )
     try {
       await screen.findByText('wallet-order', { selector: 'code' })
-      // Close the automatic payment dialog, leaving the already-open history visible.
-      if (screen.queryByRole('alertdialog')) {
-        await user.click(screen.getByRole('button', { name: 'Cancel' }))
-      }
-      const history = within(screen.getByRole('dialog'))
+      expect(post).not.toHaveBeenCalledWith(
+        '/api/mowan/idatariver/check',
+        expect.anything()
+      )
+      await user.click(screen.getByRole('button', { name: 'Check Status' }))
+      await screen.findByRole('radio', { name: 'Alipay' })
       const selfBefore = get.mock.calls.filter(
         ([url]) => url === '/api/user/self'
       ).length
@@ -132,6 +133,10 @@ it.each(['focus', 'visibility'])(
           get.mock.calls.filter(([url]) => url === '/api/user/self').length
         ).toBeGreaterThan(selfBefore)
       )
+      await user.click(await screen.findByRole('button', { name: 'Close' }))
+      await user.click(
+        await screen.findByRole('button', { name: 'Order History' })
+      )
       await waitFor(() =>
         expect(
           get.mock.calls.filter(([url]) =>
@@ -139,7 +144,10 @@ it.each(['focus', 'visibility'])(
           ).length
         ).toBeGreaterThan(historyBefore)
       )
-      expect(history.getByText('Success')).toBeVisible()
+      const history = within(
+        await screen.findByRole('dialog', { name: 'Billing History' })
+      )
+      expect(await history.findByText('Success')).toBeVisible()
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
       expect(
         post.mock.calls.filter(([url]) => url === '/api/mowan/idatariver/order')

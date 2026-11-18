@@ -84,6 +84,7 @@ it('retries a rejected creation after remount with the original request ID and S
   const original = vi.mocked(api.create).mock.calls[0]
   first.unmount()
   const restored = renderHook(() => useIdataRiver(1, undefined, settled))
+  act(() => restored.result.current.setOpen(true))
   await waitFor(() => expect(restored.result.current.error).toBe(true))
   vi.mocked(api.create).mockResolvedValue({ success: true, data: order })
   await act(() => restored.result.current.create(product, true))
@@ -131,6 +132,42 @@ it('does not restore another account lookup', async () => {
   await waitFor(() => expect(result.current.catalog).not.toBeNull())
   expect(result.current.lookup).toBeNull()
   expect(api.check).not.toHaveBeenCalled()
+})
+
+it('does not poll a saved order or recover it on focus until explicitly opened', async () => {
+  vi.useFakeTimers()
+  localStorage.setItem(
+    'mowan-idr:v1:1',
+    JSON.stringify({ trade_no: order.trade_no })
+  )
+  const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
+  await act(() => vi.advanceTimersByTimeAsync(120000))
+  act(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  expect(result.current.open).toBe(false)
+  expect(api.check).not.toHaveBeenCalled()
+  act(() => result.current.setOpen(true))
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(api.check).toHaveBeenCalledExactlyOnceWith({
+    trade_no: order.trade_no,
+  })
+})
+
+it('checks the current payment return order instead of the older saved order', async () => {
+  localStorage.setItem(
+    'mowan-idr:v1:1',
+    JSON.stringify({ trade_no: 'older-order' })
+  )
+  const { result } = renderHook(() => useIdataRiver(1, order.trade_no, settled))
+  await waitFor(() =>
+    expect(result.current.order?.trade_no).toBe(order.trade_no)
+  )
+  expect(result.current.open).toBe(true)
+  expect(api.check).toHaveBeenCalledExactlyOnceWith({
+    trade_no: order.trade_no,
+  })
 })
 
 it('keeps the original order when getting a payment link fails', async () => {
@@ -316,6 +353,7 @@ it('stops automatic queries after twelve attempts and preserves manual recovery'
     JSON.stringify({ trade_no: order.trade_no })
   )
   const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
+  act(() => result.current.setOpen(true))
   await act(() => vi.advanceTimersByTimeAsync(120000))
   expect(api.check).toHaveBeenCalledTimes(12)
   expect(result.current.lookup).not.toBeNull()
@@ -339,6 +377,7 @@ it.each(['focus first', 'visibility first'])(
       .mockResolvedValueOnce({ success: true, data: order })
       .mockRejectedValue(new Error('offline'))
     const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
+    act(() => result.current.setOpen(true))
     await act(() => vi.advanceTimersByTimeAsync(120000))
     expect(api.check).toHaveBeenCalledTimes(12)
     expect(result.current.error).toBe(true)
@@ -392,6 +431,7 @@ it('keeps failed original attempts through repeated returns without restarting b
   localStorage.setItem('mowan-idr:v1:1', JSON.stringify(original))
   vi.mocked(api.check).mockRejectedValue(new Error('offline'))
   const { result } = renderHook(() => useIdataRiver(1, undefined, settled))
+  act(() => result.current.setOpen(true))
   await act(() => vi.advanceTimersByTimeAsync(120000))
   expect(api.check).toHaveBeenCalledTimes(12)
   for (let count = 1; count <= 2; count++) {
@@ -429,6 +469,7 @@ it('coalesces recovery while a query is pending and removes both listeners on un
       })
   )
   const view = renderHook(() => useIdataRiver(1, undefined, settled))
+  act(() => view.result.current.setOpen(true))
   act(() => {
     document.dispatchEvent(new Event('visibilitychange'))
     window.dispatchEvent(new Event('focus'))
@@ -457,6 +498,7 @@ it('does not recover the previous account order after switching accounts', async
   const view = renderHook(({ id }) => useIdataRiver(id, undefined, settled), {
     initialProps: { id: 1 },
   })
+  act(() => view.result.current.setOpen(true))
   await act(() => vi.advanceTimersByTimeAsync(120000))
   const before = vi.mocked(api.check).mock.calls.length
   view.rerender({ id: 2 })
