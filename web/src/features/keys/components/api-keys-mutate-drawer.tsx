@@ -333,6 +333,7 @@ export function ApiKeysMutateDrawer({
     } catch (error) {
       if (getServerErrorStatus(error) === 409) {
         setConflict(true)
+        setReviewedKey(undefined)
         form.setError('routing', {
           message: t(
             'Routing changed elsewhere. Your draft is preserved. Review the latest version before retrying.'
@@ -427,6 +428,8 @@ export function ApiKeysMutateDrawer({
                 render={({ field }) => (
                   <FormItem>
                     <RoutingControl
+                      keyConfiguration
+                      key={initializedTarget ?? 'uninitialized'}
                       value={field.value ?? null}
                       onChange={field.onChange}
                       groups={availableAutoGroupNames}

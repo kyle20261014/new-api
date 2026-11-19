@@ -1,21 +1,26 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
-import { LoadingState } from '@/components/loading-state'
-import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 
-import { getRoutingCandidates, previewRouting } from './api'
+import { previewRouting } from './api'
 import { CandidateCard } from './candidate-card'
 import { CustomRoutingDialog } from './custom-routing-dialog'
+import { DynamicExclusionsDialog } from './dynamic-exclusions-dialog'
 import { routingReasonLabel } from './labels'
 import { defaultRouting, normalizeRouting } from './policy'
 import { RoutingHelp } from './routing-help'
 import { RoutingSelect } from './routing-select'
+import { useRoutingStrategies } from './routing-strategies'
+import { StrategyBadge } from './strategy-badge'
 import type {
   CustomRouting,
   DynamicRouting,
@@ -32,9 +37,11 @@ export function RoutingControl(props: {
   disabled?: boolean
   previewRequest?: Record<string, unknown>
   tokenId?: number
+  keyConfiguration?: boolean
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [customOpen, setCustomOpen] = useState(false)
+  const [exclusionsOpen, setExclusionsOpen] = useState(false)
   const [customDraft, setCustomDraft] = useState<CustomRouting>({
     schema_version: 1,
     mode: 'smart',
@@ -55,38 +62,28 @@ export function RoutingControl(props: {
         ? props.legacyGroup
         : '',
   })
-  const [excludedModel, setExcludedModel] = useState('')
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(1)
   const [previewModel, setPreviewModel] = useState(props.model ?? '')
   const dynamic =
     props.value?.mode === 'smart' && props.value.strategy !== 'custom'
       ? props.value
       : null
-  const candidates = useQuery({
-    queryKey: ['routing-exclusions', props.tokenId, search, page],
-    queryFn: ({ signal }) =>
-      getRoutingCandidates(
-        { search, p: page, page_size: 100, token_id: props.tokenId },
-        signal
-      ),
-    enabled: !!dynamic,
-  })
   const preview = useMutation({
     mutationFn: (snapshot: {
       routing: RoutingPolicy
       model: string
       request?: Record<string, unknown>
+      tokenId?: number
     }) =>
       previewRouting(
         normalizeRouting(snapshot.routing),
         snapshot.model,
         snapshot.request,
-        props.tokenId
+        snapshot.tokenId
       ),
     meta: { errorToast: false },
   })
   const previewIsCurrent =
+    preview.variables?.tokenId === props.tokenId &&
     JSON.stringify(preview.variables?.routing) ===
       JSON.stringify(props.value) &&
     preview.variables?.model === (props.model || previewModel) &&
@@ -98,28 +95,18 @@ export function RoutingControl(props: {
         routing: props.value,
         model: props.model || previewModel,
         request: props.previewRequest,
+        tokenId: props.tokenId,
       })
     }
   }
-  const modelNames = [
-    ...new Set((candidates.data?.items ?? []).map((item) => item.model)),
-  ]
-  const groupNames = [
-    ...new Set([
-      ...(props.groups ?? []),
-      ...(candidates.data?.items ?? []).map((item) => item.group),
-    ]),
-  ].filter((group) => group !== 'auto' && group !== 'all')
-  const updateDynamic = (patch: Partial<DynamicRouting>) => {
-    if (dynamic) props.onChange({ ...dynamic, ...patch })
-  }
-  const strategyOptions = [
-    { value: 'balanced', label: t('Balanced') },
-    { value: 'price', label: t('Price first') },
-    { value: 'speed', label: t('Speed first') },
-    { value: 'success', label: t('Success first') },
-    { value: 'custom', label: t('Custom per model') },
-  ]
+  const groupNames = [...new Set(props.groups ?? [])].filter(
+    (group) => group !== 'auto' && group !== 'all'
+  )
+  const strategies = useRoutingStrategies()
+  const strategyOptions = strategies.map((item) => ({
+    ...item,
+    badge: <StrategyBadge strategy={item.value} />,
+  }))
   const modeOptions = [
     { value: 'smart', label: t('Smart routing') },
     { value: 'fixed', label: t('Fixed group') },
@@ -133,221 +120,155 @@ export function RoutingControl(props: {
           : t('Legacy routing · original behavior'),
     })
   }
-
+  const exclusionCount =
+    (dynamic?.excluded_models?.length ?? 0) +
+    (dynamic?.excluded_groups?.length ?? 0) +
+    Object.values(dynamic?.excluded_model_groups ?? {}).reduce(
+      (sum, groups) => sum + groups.length,
+      0
+    )
   return (
     <fieldset
       disabled={props.disabled}
-      className='min-w-0 space-y-4 [&_button]:min-h-11'
+      className='bg-muted/10 min-w-0 space-y-4 rounded-3xl border p-4 [&_button]:min-h-11'
     >
-      <div className='flex flex-wrap items-end justify-between gap-2'>
-        <div className='min-w-40 flex-1'>
-          <RoutingSelect
-            label={t('Routing mode')}
-            value={props.value?.mode ?? 'legacy'}
-            options={modeOptions}
-            onChange={(mode) => {
-              if (props.value?.mode === 'smart') setSmartDraft(props.value)
-              if (props.value?.mode === 'fixed') setFixedDraft(props.value)
-              props.onChange(mode === 'fixed' ? fixedDraft : smartDraft)
-            }}
-          />
-        </div>
-        <RoutingHelp />
-      </div>
-      {!props.value && (
-        <p className='text-muted-foreground text-sm break-words'>
-          {t(
-            'This key keeps its original routing until you explicitly change it. Invalid or inherited values are preserved.'
-          )}{' '}
-          · {props.legacyGroup || t('Inherited group')}
-        </p>
-      )}
-      {props.value?.mode === 'fixed' && (
+      <RoutingHelp />
+      <div className='bg-background/40 space-y-4 rounded-2xl border p-3'>
         <RoutingSelect
-          label={t('Fixed group')}
-          value={props.value.fixed_group}
-          options={[...new Set([props.value.fixed_group, ...groupNames])].map(
-            (group) => ({ value: group, label: group || t('Inherited group') })
-          )}
-          onChange={(group) =>
-            props.onChange({
-              schema_version: 1,
-              mode: 'fixed',
-              fixed_group: group,
-            })
-          }
+          label={t('Routing mode')}
+          value={props.value?.mode ?? 'legacy'}
+          options={modeOptions}
+          onChange={(mode) => {
+            if (props.value?.mode === 'smart') setSmartDraft(props.value)
+            if (props.value?.mode === 'fixed') setFixedDraft(props.value)
+            props.onChange(mode === 'fixed' ? fixedDraft : smartDraft)
+          }}
         />
-      )}
-      {props.value?.mode === 'smart' && (
-        <>
-          <RoutingSelect
-            label={t('Routing strategy')}
-            value={props.value.strategy}
-            options={strategyOptions}
-            onChange={(strategy) => {
-              if (strategy === 'custom') {
-                if (dynamic) setDynamicDraft(dynamic)
-                setCustomOpen(true)
-                return
+        {!props.value && (
+          <p className='text-muted-foreground text-sm break-words'>
+            {t(
+              'The original settings stay in use until you change the routing.'
+            )}{' '}
+            · {props.legacyGroup || t('Inherited group')}
+          </p>
+        )}
+        {props.value?.mode === 'fixed' && (
+          <>
+            <RoutingSelect
+              label={t('Fixed group')}
+              value={props.value.fixed_group}
+              options={[
+                ...new Set([props.value.fixed_group, ...groupNames]),
+              ].map((group) => ({
+                value: group,
+                label: group || t('Inherited group'),
+              }))}
+              onChange={(group) =>
+                props.onChange({
+                  schema_version: 1,
+                  mode: 'fixed',
+                  fixed_group: group,
+                })
               }
-              if (
-                props.value?.mode === 'smart' &&
-                props.value.strategy === 'custom'
-              ) {
-                setCustomDraft(props.value)
-              }
-              const previous =
-                props.value?.mode === 'smart' &&
-                props.value.strategy !== 'custom'
-                  ? props.value
-                  : dynamicDraft
-              props.onChange({
-                ...previous,
-                strategy: strategy as DynamicStrategy,
-              })
-            }}
-          />
-          {props.value.strategy === 'custom' && (
-            <div className='space-y-2'>
-              <p className='text-muted-foreground text-sm break-words'>
-                {Object.keys(props.value.models).join(' · ')}
-              </p>
-              <Button
-                type='button'
-                variant='outline'
-                className='min-h-11'
-                onClick={() => setCustomOpen(true)}
-              >
-                {t('Configure models and groups')}
-              </Button>
-            </div>
-          )}
-        </>
-      )}
-      {dynamic && (
-        <details className='rounded-lg border p-3'>
-          <summary className='min-h-11 cursor-pointer text-sm font-medium'>
-            {t('Dynamic exclusions')}
-          </summary>
-          <div className='space-y-3'>
-            <p className='text-muted-foreground text-xs'>
+            />
+            <p className='text-muted-foreground text-sm leading-relaxed'>
               {t(
-                'Newly authorized groups participate automatically unless excluded. Existing model, IP and quota limits still apply.'
+                'Uses only your chosen group and does not switch groups if it fails.'
               )}
             </p>
-            <Input
-              aria-label={t('Search model name')}
-              placeholder={t('Search model name')}
-              value={search}
-              maxLength={128}
-              className='min-h-11'
-              onChange={(event) => {
-                setSearch(event.target.value)
-                setPage(1)
+          </>
+        )}
+        {props.value?.mode === 'smart' && (
+          <>
+            <RoutingSelect
+              label={t('Routing strategy')}
+              value={props.value.strategy}
+              options={strategyOptions}
+              onChange={(strategy) => {
+                if (strategy === 'custom') {
+                  if (dynamic) setDynamicDraft(dynamic)
+                  setCustomOpen(true)
+                  return
+                }
+                if (
+                  props.value?.mode === 'smart' &&
+                  props.value.strategy === 'custom'
+                ) {
+                  setCustomDraft(props.value)
+                }
+                const previous =
+                  props.value?.mode === 'smart' &&
+                  props.value.strategy !== 'custom'
+                    ? props.value
+                    : dynamicDraft
+                props.onChange({
+                  ...previous,
+                  strategy: strategy as DynamicStrategy,
+                })
               }}
             />
-            {candidates.isPending && <LoadingState />}
-            {candidates.isSuccess && candidates.data.items.length === 0 && (
-              <EmptyState
-                title={t('No routing candidates')}
-                description={t(
-                  'Change your search or filters to find available groups.'
-                )}
-              />
+            <p className='text-muted-foreground text-sm leading-relaxed'>
+              {
+                strategies.find(
+                  (item) =>
+                    item.value ===
+                    (props.value?.mode === 'smart' ? props.value.strategy : '')
+                )?.description
+              }
+            </p>
+            {props.value.strategy === 'custom' && (
+              <div className='space-y-2 border-t pt-3'>
+                <p className='text-muted-foreground text-sm break-words'>
+                  {Object.keys(props.value.models).join(' · ')}
+                </p>
+                <Button
+                  type='button'
+                  variant='outline'
+                  className='w-full justify-between rounded-full'
+                  onClick={() => setCustomOpen(true)}
+                >
+                  {t('Configure models and groups')}
+                  <HugeiconsIcon
+                    icon={ArrowRight01Icon}
+                    size={16}
+                    aria-hidden='true'
+                  />
+                </Button>
+              </div>
             )}
-            {candidates.isError && (
-              <ErrorState
-                description={t('Could not load routing candidates.')}
-                onRetry={() => void candidates.refetch()}
+          </>
+        )}
+        {dynamic && (
+          <div className='space-y-2 border-t pt-3'>
+            <p className='text-sm font-medium'>{t('Routing exclusions')}</p>
+            <Button
+              type='button'
+              variant='outline'
+              aria-label={t('Exclusion settings')}
+              className='h-auto w-full justify-between rounded-2xl py-3 text-start whitespace-normal'
+              onClick={() => setExclusionsOpen(true)}
+            >
+              <span>
+                {exclusionCount
+                  ? t('{{count}} exclusions set', {
+                      count: formatNumber(
+                        exclusionCount,
+                        toIntlLocale(i18n.resolvedLanguage || i18n.language)
+                      ),
+                    })
+                  : t(
+                      'All available groups are used by default. Exclude any you do not want here.'
+                    )}
+              </span>
+              <HugeiconsIcon
+                icon={ArrowRight01Icon}
+                size={16}
+                aria-hidden='true'
               />
-            )}
-            <div>
-              <p className='mb-1 text-sm'>{t('Excluded models')}</p>
-              <MultiSelect
-                options={modelNames.map((name) => ({
-                  value: name,
-                  label: name,
-                }))}
-                selected={dynamic.excluded_models ?? []}
-                onChange={(excluded_models) =>
-                  updateDynamic({ excluded_models })
-                }
-                placeholder={t('Excluded models')}
-              />
-            </div>
-            <div>
-              <p className='mb-1 text-sm'>{t('Excluded groups')}</p>
-              <MultiSelect
-                options={groupNames.map((name) => ({
-                  value: name,
-                  label: name,
-                }))}
-                selected={dynamic.excluded_groups ?? []}
-                onChange={(excluded_groups) =>
-                  updateDynamic({ excluded_groups })
-                }
-                placeholder={t('Excluded groups')}
-              />
-            </div>
-            <RoutingSelect
-              label={t('Model-specific exclusions')}
-              value={excludedModel}
-              options={[
-                { value: '', label: t('Choose a model') },
-                ...[
-                  ...new Set([
-                    ...modelNames,
-                    ...Object.keys(dynamic.excluded_model_groups ?? {}),
-                  ]),
-                ].map((name) => ({ value: name, label: name })),
-              ]}
-              onChange={setExcludedModel}
-            />
-            {excludedModel && (
-              <MultiSelect
-                options={groupNames.map((name) => ({
-                  value: name,
-                  label: name,
-                }))}
-                selected={dynamic.excluded_model_groups?.[excludedModel] ?? []}
-                onChange={(groups) =>
-                  updateDynamic({
-                    excluded_model_groups: {
-                      ...dynamic.excluded_model_groups,
-                      [excludedModel]: groups,
-                    },
-                  })
-                }
-                placeholder={t('Excluded groups')}
-              />
-            )}
-            <div className='flex gap-2'>
-              <Button
-                type='button'
-                variant='outline'
-                className='min-h-11'
-                disabled={page === 1 || candidates.isFetching}
-                onClick={() => setPage((value) => value - 1)}
-              >
-                {t('Previous')}
-              </Button>
-              <Button
-                type='button'
-                variant='outline'
-                className='min-h-11'
-                disabled={
-                  !candidates.data ||
-                  page * candidates.data.page_size >= candidates.data.total ||
-                  candidates.isFetching
-                }
-                onClick={() => setPage((value) => value + 1)}
-              >
-                {t('Next page')}
-              </Button>
-            </div>
+            </Button>
           </div>
-        </details>
-      )}
+        )}
+      </div>
       {props.value && (
         <div className='space-y-3 border-t pt-3'>
           {!props.model && (
@@ -365,7 +286,6 @@ export function RoutingControl(props: {
           <Button
             type='button'
             variant='outline'
-            className='min-h-11'
             disabled={preview.isPending || !(props.model || previewModel)}
             onClick={runPreview}
           >
@@ -376,7 +296,7 @@ export function RoutingControl(props: {
           {preview.isError && previewIsCurrent && (
             <ErrorState
               description={t(
-                'Could not preview this routing draft. Check the model and selections.'
+                'Preview failed. Check the model name and group settings, then retry.'
               )}
               onRetry={runPreview}
             />
@@ -393,7 +313,7 @@ export function RoutingControl(props: {
                 <EmptyState
                   title={t('No routing candidates')}
                   description={t(
-                    'Change your search or filters to find available groups.'
+                    'No matches found. Try another keyword or clear the filters.'
                   )}
                 />
               )}
@@ -409,6 +329,7 @@ export function RoutingControl(props: {
       )}
       {customOpen && (
         <CustomRoutingDialog
+          keyConfiguration={props.keyConfiguration}
           tokenId={props.tokenId}
           value={
             props.value?.mode === 'smart' && props.value.strategy === 'custom'
@@ -420,6 +341,19 @@ export function RoutingControl(props: {
             setCustomDraft(policy)
             props.onChange(policy)
             setCustomOpen(false)
+          }}
+        />
+      )}
+      {exclusionsOpen && dynamic && (
+        <DynamicExclusionsDialog
+          value={dynamic}
+          groups={props.groups}
+          tokenId={props.tokenId}
+          onClose={() => setExclusionsOpen(false)}
+          onSave={(policy) => {
+            setDynamicDraft(policy)
+            props.onChange(policy)
+            setExclusionsOpen(false)
           }}
         />
       )}

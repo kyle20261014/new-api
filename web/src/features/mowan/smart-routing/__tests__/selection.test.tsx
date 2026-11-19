@@ -47,7 +47,8 @@ const empty: CustomRouting = {
 
 function mount(
   value: CustomRouting = empty,
-  available: RoutingCandidate[] | Error = candidates
+  available: RoutingCandidate[] | Error = candidates,
+  keyConfiguration = false
 ) {
   vi.spyOn(api, 'get').mockImplementation(async () => {
     if (available instanceof Error) throw available
@@ -69,6 +70,7 @@ function mount(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
         <CustomRoutingDialog
+          keyConfiguration={keyConfiguration}
           value={value}
           onSave={onSave}
           onClose={() => undefined}
@@ -79,12 +81,21 @@ function mount(
   return onSave
 }
 
+test('only Key configuration asks users to save the Key after applying', async () => {
+  mount(empty, candidates, true)
+  expect(
+    await screen.findByText(
+      'After applying, save the Key for these settings to take effect.'
+    )
+  ).toBeVisible()
+})
+
 test('healthy selection survives filters, manual keyboard reorder preserves focus, and apply emits only the draft', async () => {
   const user = userEvent.setup()
   const onSave = mount()
   await user.click(await screen.findByRole('button', { name: 'chat-model' }))
   await user.click(
-    screen.getByRole('button', { name: 'Select healthy on this page' })
+    screen.getByRole('button', { name: 'Select healthy groups on this page' })
   )
   expect(
     screen.getByRole('checkbox', { name: /^Select chat-model \/ offline/ })
@@ -118,7 +129,9 @@ test('healthy selection survives filters, manual keyboard reorder preserves focu
       name: /Try temporarily offline groups for chat-model$/,
     })
   )
-  await user.click(screen.getByRole('button', { name: 'Apply to draft' }))
+  await user.click(
+    screen.getByRole('button', { name: 'Use this configuration' })
+  )
   expect(onSave).toHaveBeenCalledWith({
     ...empty,
     models: {
@@ -174,4 +187,125 @@ test('candidate loading failure exposes retry and keeps the draft unsaved', asyn
   const onSave = mount(empty, new Error('offline'))
   expect(await screen.findByRole('button', { name: 'Retry' })).toBeEnabled()
   expect(onSave).not.toHaveBeenCalled()
+})
+
+test('custom scope and single-group warning follow selection count', async () => {
+  mount()
+  const user = userEvent.setup()
+  expect(
+    screen.queryByText(
+      'After applying, save the Key for these settings to take effect.'
+    )
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByText('Only models and groups selected here will be used.')
+  ).toBeVisible()
+  await user.click(
+    await screen.findByRole('checkbox', {
+      name: 'Select chat-model / standard',
+    })
+  )
+  expect(
+    screen.getByText(
+      'Only one group is selected. If it fails, there is no other selected group to try.'
+    )
+  ).toBeVisible()
+  await user.click(
+    screen.getByRole('checkbox', { name: 'Select chat-model / priority' })
+  )
+  expect(
+    screen.queryByText(/Only one group is selected/)
+  ).not.toBeInTheDocument()
+})
+
+test('custom health-empty clears every filter without losing selected groups', async () => {
+  mount({
+    ...empty,
+    models: {
+      'chat-model': {
+        groups: ['standard'],
+        strategy: 'balanced',
+        try_soft_offline: false,
+      },
+    },
+  })
+  const user = userEvent.setup()
+  await screen.findByRole('checkbox', { name: 'Select chat-model / standard' })
+  await user.click(screen.getByRole('combobox', { name: 'Health filter' }))
+  await user.click(await screen.findByRole('option', { name: 'Congested' }))
+  await user.click(await screen.findByRole('button', { name: 'Clear filters' }))
+  expect(
+    await screen.findByRole('checkbox', {
+      name: 'Select chat-model / standard',
+    })
+  ).toBeChecked()
+  expect(screen.getByRole('button', { name: 'All models' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  expect(
+    screen.getByRole('combobox', { name: 'Health filter' })
+  ).toHaveTextContent('All')
+})
+
+test('custom true-empty explains authorization and reloads when candidates become available', async () => {
+  mount(empty, [])
+  expect(
+    await screen.findByText(/No groups are available for this account or Key/)
+  ).toBeVisible()
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      success: true,
+      data: { items: candidates, total: 3, page: 1, page_size: 100 },
+    },
+  })
+  await userEvent
+    .setup()
+    .click(screen.getByRole('button', { name: 'Reload candidates' }))
+  await screen.findByRole('checkbox', { name: 'Select chat-model / standard' })
+})
+
+test('current model scheduling explanation stays visible and follows individual, batch and back navigation changes', async () => {
+  mount({
+    ...empty,
+    models: {
+      'chat-model': {
+        groups: ['standard', 'priority'],
+        strategy: 'balanced',
+        try_soft_offline: false,
+      },
+    },
+  })
+  const user = userEvent.setup()
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
+  )
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  expect(
+    screen.getByText(
+      'Automatically chooses among this model’s selected groups using the chosen strategy.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.getByText(/Balances price, speed and reliability/)
+  ).toBeVisible()
+  await user.click(
+    screen.getByRole('combobox', { name: 'Scheduling for chat-model' })
+  )
+  await user.click(await screen.findByRole('option', { name: 'Price first' }))
+  expect(
+    screen.getByText(/Prefers lower-priced groups/, { selector: 'p' })
+  ).toBeVisible()
+  await user.click(
+    screen.getByRole('combobox', { name: 'Apply scheduling to all models' })
+  )
+  await user.click(await screen.findByRole('option', { name: 'Manual order' }))
+  expect(
+    screen.getByText(
+      'Tries groups from top to bottom, skipping unavailable ones. Drag or use the up and down buttons to reorder.'
+    )
+  ).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Previous step' }))
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  expect(screen.getByText(/Tries groups from top to bottom/)).toBeVisible()
 })

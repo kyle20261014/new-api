@@ -5,21 +5,19 @@ import { api } from '@/lib/api'
 import { getSelectedRoutingCandidates, previewRouting } from '../api'
 
 test('preview forwards a read-only policy and strips legacy group fields from the actual request quote', async () => {
-  const post = vi
-    .spyOn(api, 'post')
-    .mockResolvedValue({
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
       data: {
-        success: true,
-        data: {
-          items: [],
-          total: 0,
-          page: 1,
-          page_size: 100,
-          reason: 'No candidates',
-          algorithm_version: '1',
-        },
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 100,
+        reason: 'No candidates',
+        algorithm_version: '1',
       },
-    })
+    },
+  })
   const request = {
     model: 'chat',
     group: 'old-group',
@@ -75,5 +73,6 @@ test('selected candidates load subsequent pages with the same key restrictions',
   expect(get).toHaveBeenLastCalledWith('/api/mowan/smart-routing/candidates', {
     params: { model: 'chat', p: 2, page_size: 100, token_id: 8 },
     signal: undefined,
+    disableDuplicate: true,
   })
 })

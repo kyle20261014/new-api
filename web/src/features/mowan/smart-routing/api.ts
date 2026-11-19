@@ -26,7 +26,8 @@ export async function getRoutingCandidates(
 ): Promise<CandidatePage> {
   const response = await api.get<ApiResponse<CandidatePage>>(
     '/api/mowan/smart-routing/candidates',
-    { params, signal }
+    // React Query owns deduplication; its AbortSignals must not share HTTP promises.
+    { params, signal, disableDuplicate: true }
   )
   const body = requireServerSuccess(response.data)
   if (!body.data) throw new Error(t('Failed to load'))

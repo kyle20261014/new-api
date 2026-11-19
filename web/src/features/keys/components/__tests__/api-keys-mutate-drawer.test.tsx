@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
@@ -87,7 +94,10 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
   }
 }
 
-async function renderCreateDrawer(currentRow?: ApiKey): Promise<void> {
+async function renderCreateDrawer(
+  currentRow?: ApiKey,
+  onOpenChange = vi.fn()
+): Promise<void> {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -131,7 +141,7 @@ async function renderCreateDrawer(currentRow?: ApiKey): Promise<void> {
           <ApiKeysMutateDrawer
             open
             currentRow={currentRow}
-            onOpenChange={() => undefined}
+            onOpenChange={onOpenChange}
           />
         </ApiKeysProvider>
       </I18nextProvider>
@@ -197,6 +207,46 @@ afterEach(() => {
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
+  test('help Escape and close restore focus without closing the Key drawer or changing its draft', async () => {
+    const user = userEvent.setup()
+    const created: Array<Record<string, unknown>> = []
+    installApiFixtures(created)
+    const onOpenChange = vi.fn()
+    await renderCreateDrawer(undefined, onOpenChange)
+    changeInput(getControlByLabel('Name'), 'keep this draft')
+    await user.click(screen.getByRole('combobox', { name: 'Routing strategy' }))
+    await user.click(await screen.findByRole('option', { name: 'Speed first' }))
+    const trigger = screen.getByRole('button', { name: 'How to choose?' })
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    const help = await screen.findByRole('dialog', {
+      name: 'How should I choose a routing strategy?',
+    })
+    await user.tab()
+    expect(help.contains(document.activeElement)).toBe(true)
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(help).not.toBeInTheDocument())
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(screen.getByRole('dialog', { name: 'Create API Key' })).toBeVisible()
+    expect(getControlByLabel('Name')).toHaveValue('keep this draft')
+    expect(
+      screen.getByRole('combobox', { name: 'Routing strategy' })
+    ).toHaveTextContent('Speed first')
+    await user.click(trigger)
+    const reopened = await screen.findByRole('dialog', {
+      name: 'How should I choose a routing strategy?',
+    })
+    await user.click(within(reopened).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(reopened).not.toBeInTheDocument())
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(getControlByLabel('Name')).toHaveValue('keep this draft')
+    expect(
+      screen.getByRole('combobox', { name: 'Routing strategy' })
+    ).toHaveTextContent('Speed first')
+    expect(created).toEqual([])
+  })
+
   test('a routing version conflict retains the edited name and strategy until an explicit reviewed retry', async () => {
     const user = userEvent.setup()
     installApiFixtures([])
@@ -236,6 +286,12 @@ describe('API keys mutate drawer Auto group integration', () => {
           data: { success: false, code: 'routing_version_conflict' },
         },
       })
+      .mockRejectedValueOnce({
+        response: {
+          status: 409,
+          data: { success: false, code: 'routing_version_conflict' },
+        },
+      })
       .mockResolvedValue({ data: { success: true } })
     await renderCreateDrawer(original)
     changeInput(getControlByLabel('Name'), 'my draft')
@@ -266,6 +322,30 @@ describe('API keys mutate drawer Auto group integration', () => {
       name: 'my draft',
       expected_routing_version: 4,
       routing: { mode: 'smart', strategy: 'price' },
+    })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', {
+          name: 'Use reviewed version for this draft',
+        })
+      ).not.toBeInTheDocument()
+    )
+    expect(getControlByLabel('Name')).toHaveValue('my draft')
+    latest = { ...latest, routing_version: 5 }
+    await user.click(
+      screen.getByRole('button', { name: 'Review latest policy' })
+    )
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Use reviewed version for this draft',
+      })
+    )
+    await user.click(findButton('Save changes', true))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(3))
+    expect(put.mock.calls[2][1]).toMatchObject({
+      name: 'my draft',
+      expected_routing_version: 5,
+      routing: { strategy: 'price' },
     })
   })
 
