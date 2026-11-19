@@ -136,6 +136,11 @@ func (w *diagnosticResponse) Write(data []byte) (int, error) {
 	return w.body.Write(data)
 }
 
+// Flush satisfies http.Flusher for Gin's response writer wrapper. The
+// diagnostic relay keeps the response in bounded memory, so flushing has no
+// transport to write to.
+func (w *diagnosticResponse) Flush() {}
+
 // newDiagnosticChatRequest keeps the internal relay request on a relative path:
 // the relay copies c.Request.URL.String() into the upstream URL, so an absolute
 // internal URL would be appended to the channel base URL.
