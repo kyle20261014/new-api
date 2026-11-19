@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ChevronRight } from 'lucide-react'
+import { Activity, ChevronRight } from 'lucide-react'
 import { memo, useMemo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
+import { ModelDiagnostics } from '@/features/mowan/model-diagnostics'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -36,7 +37,7 @@ import {
   getDynamicPricingSummary,
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
-import { parseTags } from '../lib/filters'
+import { filterByCategory, parseTags } from '../lib/filters'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
@@ -64,6 +65,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const isTokenBased = isTokenBasedModel(props.model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
+  const supportsDiagnostics = filterByCategory([props.model], 'text').length > 0
   const groups = props.model.enable_groups || []
   const endpoints = props.model.supported_endpoint_types || []
   const modelIconKey = props.model.icon || props.model.vendor_icon
@@ -399,14 +401,27 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           perf={props.perf}
           className='border-border/60 border-t pt-2'
         >
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={() => props.onClick(props.model.model_name || '')}
-          >
-            {t('Details')}
-            <ChevronRight aria-hidden className='size-3.5' />
-          </Button>
+          <div className='flex items-center gap-1'>
+            {supportsDiagnostics && (
+              <ModelDiagnostics
+                model={props.model.model_name || ''}
+                trigger={
+                  <Button variant='outline' size='sm' className='min-w-0'>
+                    <Activity aria-hidden className='size-3.5 shrink-0' />
+                    <span className='truncate'>{t('Model diagnostics')}</span>
+                  </Button>
+                }
+              />
+            )}
+            <Button
+              variant='ghost'
+              size='sm'
+              onClick={() => props.onClick(props.model.model_name || '')}
+            >
+              {t('Details')}
+              <ChevronRight aria-hidden className='size-3.5' />
+            </Button>
+          </div>
         </ModelPerfBadge>
       </CardFooter>
     </Card>

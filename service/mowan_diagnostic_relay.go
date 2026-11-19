@@ -72,11 +72,18 @@ func DiagnosticGroups(c *gin.Context, userID int, name string) ([]string, bool, 
 	chat := false
 	for _, p := range model.GetPricing() {
 		if p.ModelName == name {
-			chat = p.DeclaredChatEndpoint
+			chat = diagnosticChatCapable(p)
 			break
 		}
 	}
 	return groups, chat, nil
+}
+
+// diagnosticChatCapable reuses the model square's single category rule instead of
+// requiring a per-model endpoint declaration. The homepage CanChat signal keeps
+// its stricter declared-endpoint rule; only diagnostics widen to text models.
+func diagnosticChatCapable(p model.Pricing) bool {
+	return catalogCategory(p) == "text"
 }
 
 // Config changes mark reports stale without exposing configuration or credentials.

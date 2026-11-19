@@ -59,7 +59,7 @@ func StartModelDiagnostic(c *gin.Context) {
 	}
 	chat, err := diagnosticAccess(c, input.Model, input.Group)
 	if err != nil || !chat {
-		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("This model or group does not support chat diagnostics"))
+		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Only text models support diagnostics."))
 		return
 	}
 	identity, ok := middleware.GetSessionAuthIdentity(c)

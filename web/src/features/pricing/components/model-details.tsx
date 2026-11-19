@@ -48,7 +48,6 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ModelDiagnostics } from '@/features/mowan/model-diagnostics'
 import { RoutingExperience } from '@/features/mowan/smart-routing/routing-experience'
 import { getPerfMetrics } from '@/features/performance-metrics/api'
 import {
@@ -1496,7 +1495,6 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
           model={props.model.model_name}
           canChat={props.model.supported_endpoint_types?.includes('openai')}
         />
-        <ModelDiagnostics model={props.model.model_name} />
       </div>
 
       <Tabs defaultValue='overview' className='gap-4'>
