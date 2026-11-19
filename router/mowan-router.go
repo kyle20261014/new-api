@@ -11,6 +11,11 @@ import (
 )
 
 func registerMowanRoutes(api *gin.RouterGroup) {
+	diagnostics := api.Group("/mowan/model-diagnostics", middleware.DisableCache(), middleware.UserAuth(), middleware.AnonymousRequestBodyLimit())
+	handlePermissionRoute(diagnostics, http.MethodGet, "/catalog", authz.DiagnosticsRead, controller.GetModelDiagnosticCatalog)
+	handlePermissionRoute(diagnostics, http.MethodGet, "/reports", authz.DiagnosticsRead, controller.ListModelDiagnosticReports)
+	handlePermissionRoute(diagnostics, http.MethodGet, "/reports/:id", authz.DiagnosticsRead, controller.GetModelDiagnosticReport)
+	handlePermissionRoute(diagnostics, http.MethodPost, "/runs", authz.DiagnosticsCreate, middleware.UserCriticalRateLimit("model-diagnostics"), controller.StartModelDiagnostic)
 	api.GET("/mowan/homepage/models", middleware.DisableCache(), middleware.HeaderNavModuleAuth("pricing"), controller.GetHomepageModels)
 	routing := api.Group("/mowan/smart-routing", middleware.DisableCache(), middleware.AnonymousRequestBodyLimit())
 	self := routing.Group("/self", middleware.RoutingSelfAudit(), middleware.RoutingSelfAuth(), middleware.UserCriticalRateLimit("smart-routing-self"))

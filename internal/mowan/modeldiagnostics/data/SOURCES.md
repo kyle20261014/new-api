@@ -1,0 +1,11 @@
+# Frozen detector data
+
+All files are loaded locally. No detection requests or runtime downloads are performed by the parent package.
+
+- `unified_bank.json`: https://github.com/Ikaleio/lm-detector/blob/70159b7536a2ceb55c478c8c9472da81d3627e59/data/unified_bank.json, 15,080,046 bytes, SHA-256 `81d96a68404e2c394731d482f0e261f02b1a9c12e3bcfb4ccb677f8f0c715048`.
+- `shared_detector.bin`: https://github.com/Ikaleio/lm-detector/blob/70159b7536a2ceb55c478c8c9472da81d3627e59/data/shared_detector.bin, 5,443,668 bytes, SHA-256 `a55d4bb275b09b630d9deeeac5a119077869a40dc65132ffff0ab87e58b7c9e9`.
+- The data build is `2026-11-19T05:26:09.347356+00:00`. The repository's MIT license is retained at `../lmfpd/LICENSE` (Copyright (c) 2026 xqy2006). No separate data license was found in the pinned repository. This is the official frozen bank, not synthesized model samples.
+- The Go SDK source and templates in `../lmfpd/` are from that same commit. `local.go` only exposes in-memory loading of verified bytes; the upstream decoder, challenge generator and scorer are unchanged. Unused network sampling, cache and download entry points are omitted from the vendored subset.
+- `intelligence.js`: https://github.com/Vhow123/dsh-model-probe/blob/8f97b83b83fd708ee2985e8bbcfeedf56c078d64/intelligence.js. Preserved as provenance and used by the question-data consistency test, never executed. MIT notice is retained at `../LICENSE.dsh-model-probe` (Copyright (c) 2026 Vhow123).
+- The pinned eighteen original question weights sum to **35**. The specification's previous total of 36 was corrected against the fixed source. Original weights are unchanged; reporting always uses the full denominator **35**, including when a service step fails. Grader v2 proves only complete, strictly token-matched even-number loops or the guarded arithmetic-series formula, for finite integer inputs with a safe JS integer result and standard `Math.floor`. It never executes generated code. Other implementations remain unjudged; incomplete or unjudged rounds have no full percentage.
+- Standard drawing prompt is the approved reference prompt. The creative material pool is the platform's adaptation (`mowan-adapted-v1`), not the reference site's unpublished full pool. Each plan includes its chosen materials and complete prompt.

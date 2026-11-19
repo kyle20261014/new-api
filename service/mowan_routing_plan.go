@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -81,6 +82,9 @@ func RoutingPlanFor(c *gin.Context) *RoutingPlan {
 		panic(fmt.Errorf("routing request identity: %w", err))
 	}
 	p := &RoutingPlan{RequestID: hex.EncodeToString(id[:]), Budget: max(1, 1+common.RetryTimes), Tried: map[int]bool{}, Keys: map[string]bool{}, StartedAt: time.Now()}
+	if origin := diagnosticRelayOrigin(c); origin != nil {
+		p.RequestID = origin.request
+	}
 	if c.Request != nil {
 		p.Deadline, _ = c.Request.Context().Deadline()
 	}
@@ -105,6 +109,18 @@ func routingFailure(reason string) *ChannelSelectError {
 // routingAuthority deliberately avoids token, user and channel caches. Lock order
 // matches funding/config mutation: User, Token, then routing configuration.
 func routingAuthority(c *gin.Context, name string, fn func(*gorm.DB, *model.TokenRouting, []string, string) error) error {
+	origin := diagnosticRelayOrigin(c)
+	var diagnosticRole int
+	if origin != nil {
+		_, user, err := ValidateLoginSession(origin.identity)
+		if err != nil {
+			return err
+		}
+		if !authz.Can(user.Id, user.Role, authz.DiagnosticsCreate) {
+			return errors.New("routing_identity_unavailable")
+		}
+		diagnosticRole = user.Role
+	}
 	return model.DB.Transaction(func(tx *gorm.DB) error {
 		var user model.User
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, "id = ?", c.GetInt("id")).Error; err != nil {
@@ -115,7 +131,25 @@ func routingAuthority(c *gin.Context, name string, fn func(*gorm.DB, *model.Toke
 		}
 		user.ToBaseUser().WriteContext(c)
 		var row *model.TokenRouting
-		if c.GetBool("mowan_routing_playground") {
+		if origin != nil {
+			if c.Request == nil || c.Request.URL.Path != "/v1/chat/completions" || c.GetInt("token_id") != 0 || c.GetBool("use_access_token") || origin.identity.UserID != user.Id || user.AuthVersion != origin.identity.UserAuthVersion || user.Role != diagnosticRole {
+				return errors.New("routing_identity_unavailable")
+			}
+			// Read through this transaction, not the pool: single-connection SQLite
+			// must not deadlock, and cached sessions must not mask a revocation.
+			var session model.UserSession
+			if err := tx.Select("sid", "user_id", "version", "user_auth_version", "status", "expires_at", "revoked_at").First(&session, "sid = ?", origin.identity.SessionID).Error; err != nil {
+				return err
+			}
+			if session.UserID != user.Id || session.Status != model.UserSessionStatusActive || session.RevokedAt != 0 || session.ExpiresAt <= time.Now().Unix() || session.Version != origin.identity.SessionVersion || session.UserAuthVersion != origin.identity.UserAuthVersion {
+				return ErrLoginSessionRevoked
+			}
+			if !IsUserSelectableGroup(user.Group, origin.group) {
+				return errors.New("routing_group_forbidden")
+			}
+			value, _ := c.Get(smartrouting.ContextKey)
+			row, _ = value.(*model.TokenRouting)
+		} else if c.GetBool("mowan_routing_playground") {
 			if c.Request == nil || c.Request.URL.Path != "/pg/chat/completions" || c.GetInt("token_id") != 0 || c.GetInt("access_token_id") > 0 || c.GetString("access_token_ref") != "" || c.GetBool("access_token_legacy") {
 				return errors.New("routing_identity_unavailable")
 			}
@@ -484,6 +518,9 @@ func BeginRoutingSend(c *gin.Context) error {
 			return fmt.Errorf("routing sending qualification: %w", err)
 		}
 		c.Set("mowan_routing_submission", sending)
+	}
+	if err := diagnosticBeforeSend(c, b.ChannelID); err != nil {
+		return err
 	}
 	p.Sent++
 	p.Tried[b.ChannelID] = true
