@@ -161,6 +161,24 @@ function renderWithProviders(
       },
     },
   })
+  queryClient.setQueryData(
+    ['homepage-models'],
+    [
+      {
+        id: 'catalog-chat',
+        name: 'catalog-chat',
+        canChat: true,
+        tag: 'Catalog Vendor',
+        icon: 'OpenAI',
+      },
+      {
+        id: 'catalog-media',
+        name: 'catalog-media',
+        canChat: false,
+        tag: 'Media Vendor',
+      },
+    ]
+  )
   return render(
     <QueryClientProvider client={queryClient}>
       <I18nextProvider i18n={options?.i18nInstance || i18n}>
@@ -993,7 +1011,7 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     expect(hero?.querySelector('.xc-scroll')).toBeInTheDocument()
 
     const floatingChips = hero?.querySelectorAll('.xc-chip.xc-floating')
-    expect(floatingChips?.length).toBe(11)
+    expect(floatingChips?.length).toBe(2)
   })
 
   test('validates 7-language translation completeness for all Mowan AI landing keys', () => {
@@ -1259,7 +1277,7 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     window.innerHeight = originalInnerHeight
   })
 
-  test('translates model tags in models section across locales without hardcoded Chinese', async () => {
+  test('translates catalog ordering and keeps vendor labels without unverified marketing tags', async () => {
     vi.mocked(hooks.useHomePageContent).mockReturnValue({
       content: '',
       isLoaded: true,
@@ -1276,9 +1294,11 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     )
     await screen.findByRole('heading', { level: 1 })
 
-    // Under zh locale, tag displays "推理"
-    expect(screen.getAllByText('推理').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('旗舰').length).toBeGreaterThan(0)
+    expect(
+      screen.getByText(testI18n.t('mowan.models.catalogOrder'))
+    ).toBeInTheDocument()
+    expect(screen.getAllByText('Catalog Vendor').length).toBeGreaterThan(0)
+    expect(screen.queryByText('旗舰')).not.toBeInTheDocument()
     unmount()
 
     // Switch i18n to en
@@ -1290,9 +1310,11 @@ describe('Home Page & Mowan AI Landing Feature', () => {
     )
     await screen.findByRole('heading', { level: 1 })
 
-    // Under en locale, tags display as English translations
-    expect(screen.getAllByText('Reasoning').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Flagship').length).toBeGreaterThan(0)
+    expect(
+      screen.getByText(testI18n.t('mowan.models.catalogOrder'))
+    ).toBeInTheDocument()
+    expect(screen.getAllByText('Catalog Vendor').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Flagship')).not.toBeInTheDocument()
     expect(screen.queryByText('推理')).not.toBeInTheDocument()
 
     unmountEn()

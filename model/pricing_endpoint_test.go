@@ -190,6 +190,72 @@ func TestPricingNativeChannelEndpointTypesUnchanged(t *testing.T) {
 	assert.Equal(t, []constant.EndpointType{constant.EndpointTypeAnthropic, constant.EndpointTypeOpenAI}, byModel["claude-3-5-sonnet"])
 }
 
+func TestPricingCatalogCreationTimeOnlyUsesExactMetadata(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	insertPricingEndpointChannel(t, 210, constant.ChannelTypeOpenAI, dto.ChannelOtherSettings{})
+	for _, name := range []string{"exact", "family-new", "unknown", "hidden"} {
+		insertPricingEndpointAbility(t, 210, name)
+	}
+	for _, meta := range []Model{
+		{ModelName: "exact", Status: 1, CreatedTime: 123},
+		{ModelName: "family-", NameRule: NameRulePrefix, Status: 1, CreatedTime: 999},
+		{ModelName: "hidden", Status: 2, CreatedTime: 456},
+	} {
+		require.NoError(t, DB.Create(&meta).Error)
+	}
+	InitChannelCache()
+	byModel := make(map[string]int64)
+	for _, item := range GetPricing() {
+		byModel[item.ModelName] = item.CatalogCreatedTime
+	}
+	require.Equal(t, map[string]int64{"exact": 123, "family-new": 0, "unknown": 0}, byModel)
+}
+
+func TestPricingHomepageChatRequiresExactChatPathDeclaration(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	insertPricingEndpointChannel(t, 211, constant.ChannelTypeOpenAI, dto.ChannelOtherSettings{})
+	cases := []struct {
+		name      string
+		endpoints string
+		canChat   bool
+	}{
+		{"text-embedding-3-small", `["embeddings"]`, false},
+		{"dall-e-3", `{"image-generation":"/v1/images/generations"}`, false},
+		{"unconfirmed-model", "", false},
+		{"confirmed-chat", `{"openai":"/v1/chat/completions"}`, true},
+		{"confirmed-chat-object", `{"openai":{"path":"/v1/chat/completions","method":"POST"}}`, true},
+		{"confirmed-chat-default-method", `{"openai":{"path":"/v1/chat/completions"}}`, true},
+		{"protocol-only", `["openai"]`, false},
+		{"wrong-path", `{"openai":"/v1/embeddings"}`, false},
+		{"wrong-method", `{"openai":{"path":"/v1/chat/completions","method":"GET"}}`, false},
+		{"malformed", `{`, false},
+		{"family-chat", "", false},
+	}
+	for _, tc := range cases {
+		insertPricingEndpointAbility(t, 211, tc.name)
+		if tc.endpoints != "" {
+			require.NoError(t, DB.Create(&Model{ModelName: tc.name, Status: 1, Endpoints: tc.endpoints}).Error)
+		}
+	}
+	require.NoError(t, DB.Create(&Model{ModelName: "family-", NameRule: NameRulePrefix, Status: 1, Endpoints: `{"openai":"/v1/chat/completions"}`}).Error)
+	InitChannelCache()
+	byModel := make(map[string]Pricing)
+	for _, pricing := range GetPricing() {
+		byModel[pricing.ModelName] = pricing
+	}
+	for _, tc := range cases {
+		item, exists := byModel[tc.name]
+		require.True(t, exists, tc.name)
+		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeOpenAI, tc.name)
+		require.Equal(t, tc.canChat, item.DeclaredChatEndpoint, tc.name)
+		encoded, err := common.Marshal(item)
+		require.NoError(t, err)
+		require.NotContains(t, string(encoded), "can_chat", "ordinary pricing JSON contract must not change")
+		require.NotContains(t, string(encoded), "DeclaredChatEndpoint")
+	}
+	require.Contains(t, byModel["dall-e-3"].SupportedEndpointTypes, constant.EndpointTypeImageGeneration)
+}
+
 func TestInitChannelCacheInvalidatesPricingCache(t *testing.T) {
 	resetPricingEndpointTestTables(t)
 

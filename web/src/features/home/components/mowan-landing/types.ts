@@ -16,16 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ReactNode } from 'react'
-
 export interface ModelCapsule {
   id: string
   name: string
-  category: 'chat' | 'image' | 'video' | 'audio' | 'code'
+  canChat: boolean
   tag?: string
-  tagKey?: string
-  icon?: string | ReactNode
-  color?: string
+  icon?: string
 }
 
 export interface GalleryItem {

@@ -11,6 +11,7 @@ import (
 )
 
 func registerMowanRoutes(api *gin.RouterGroup) {
+	api.GET("/mowan/homepage/models", middleware.DisableCache(), middleware.HeaderNavModuleAuth("pricing"), controller.GetHomepageModels)
 	routing := api.Group("/mowan/smart-routing", middleware.DisableCache(), middleware.AnonymousRequestBodyLimit())
 	self := routing.Group("/self", middleware.RoutingSelfAudit(), middleware.RoutingSelfAuth(), middleware.UserCriticalRateLimit("smart-routing-self"))
 	self.GET("", controller.GetRoutingSelf)

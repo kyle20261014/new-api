@@ -23,7 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
-import { HERO_FLOATING_MODELS } from './data'
+import { useHomepageModels } from './model-catalog'
 
 export interface HeroSectionProps {
   onExploreClick?: () => void
@@ -46,6 +46,7 @@ const HERO_CHIP_COORDS = [
 
 export function HeroSection(props: HeroSectionProps) {
   const { t } = useTranslation()
+  const catalog = useHomepageModels()
 
   const handleScrollTo = (id: string) => {
     const el = document.querySelector<HTMLElement>(`#${id}`)
@@ -124,7 +125,7 @@ export function HeroSection(props: HeroSectionProps) {
 
       {/* Right Column: Cosmic Star Orb & 11 Floating Model Chips matching reference template (807-845) */}
       <div className='xc-orbit'>
-        {HERO_FLOATING_MODELS.slice(0, 11).map((model, idx) => {
+        {(catalog.data ?? []).slice(0, 11).map((model, idx) => {
           const coord = HERO_CHIP_COORDS[idx] || { x: 50, y: 50 }
           return (
             <Button
@@ -147,14 +148,7 @@ export function HeroSection(props: HeroSectionProps) {
               }
             >
               <span className='xc-model-icon'>
-                {typeof model.icon === 'string'
-                  ? getLobeIcon(model.icon, 26)
-                  : model.icon || (
-                      <span
-                        className='xc-mark size-2.5 shrink-0 rounded-full'
-                        style={{ backgroundColor: model.color || '#4fd1ff' }}
-                      />
-                    )}
+                {getLobeIcon(model.icon, 26)}
               </span>
               <span className='xc-model-name'>{model.name}</span>
             </Button>
