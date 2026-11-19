@@ -346,6 +346,9 @@ func InitResources(pilot *fundingPilotStartup) error {
 		if err = model.MigrateTokenRouting(model.DB); err != nil {
 			return fmt.Errorf("initialize smart routing schema: %w", err)
 		}
+		if err = model.MigrateModelDiagnostics(model.DB); err != nil {
+			return fmt.Errorf("initialize model diagnostics schema: %w", err)
+		}
 		if err = model.MigrateRoutingMetrics(model.DB); err != nil {
 			return fmt.Errorf("initialize smart routing observations: %w", err)
 		}

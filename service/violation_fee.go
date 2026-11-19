@@ -99,6 +99,11 @@ func calcViolationFeeQuota(amount, groupRatio float64) int {
 	return quota
 }
 
+// ViolationFeeOperationID is also used to correlate the persisted charge in reports.
+func ViolationFeeOperationID(requestID string) string {
+	return fmt.Sprintf("violation:%x", sha256.Sum256([]byte(requestID+"\x00violation-fee")))
+}
+
 // ChargeViolationFeeIfNeeded charges an additional fee after the normal flow finishes (including refund).
 // It uses Grok fee settings as the fee policy.
 func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
@@ -131,7 +136,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		requestID = common.NewRequestId()
 		relayInfo.RequestId = requestID
 	}
-	operationID := fmt.Sprintf("violation:%x", sha256.Sum256([]byte(requestID+"\x00violation-fee")))
+	operationID := ViolationFeeOperationID(requestID)
 	result, err := postConsumeFundingDelta(ctx.Request.Context(), relayInfo, feeQuota, operationID, false)
 	if err != nil {
 		logger.LogError(ctx, common.LogText("failed to charge violation fee: %s", err.Error()))

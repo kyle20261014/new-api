@@ -137,6 +137,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
+	service.CaptureDiagnosticRelay(c, relayInfo)
 
 	defer func() {
 		recovered := recover()

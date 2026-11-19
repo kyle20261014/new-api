@@ -33,15 +33,14 @@ func TestInitSeedsBuiltInRolesAndPoliciesOnce(t *testing.T) {
 	require.NoError(t, Init(db))
 	require.NoError(t, Init(db))
 
-	// root is a superuser role and is granted everything implicitly, so only the
-	// admin baseline is written as explicit policy rows.
+	// Root is implicit; user and admin baselines are persisted independently.
 	var count int64
 	require.NoError(t, db.Model(&model.CasbinRule{}).Count(&count).Error)
-	assert.Equal(t, int64(len(PermissionsForRole(BuiltInRoleAdmin))), count)
+	assert.Equal(t, int64(len(PermissionsForRole(BuiltInRoleAdmin))+len(PermissionsForRole(BuiltInRoleUser))), count)
 
 	var roles []model.AuthzRole
 	require.NoError(t, db.Order("sort asc").Find(&roles).Error)
-	require.Len(t, roles, 2)
+	require.Len(t, roles, 3)
 	assert.Equal(t, BuiltInRoleRoot, roles[0].Key)
 	assert.Equal(t, BuiltInRoleAdmin, roles[1].Key)
 
@@ -51,6 +50,9 @@ func TestInitSeedsBuiltInRolesAndPoliciesOnce(t *testing.T) {
 	assert.True(t, Can(2, common.RoleAdminUser, ChannelWrite))
 	assert.False(t, Can(2, common.RoleAdminUser, ChannelSensitiveWrite))
 	assert.False(t, Can(3, common.RoleCommonUser, ChannelRead))
+	assert.Equal(t, BuiltInRoleUser, roles[2].Key)
+	assert.True(t, Can(3, common.RoleCommonUser, DiagnosticsRead))
+	assert.True(t, Can(3, common.RoleCommonUser, DiagnosticsCreate))
 }
 
 func TestInitOnSlaveOnlyLoadsPolicies(t *testing.T) {
@@ -157,8 +159,9 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ResourceTaskPlugin: {
 			ActionBind: false,
 		},
-		ResourceAudit:   {ActionRead: false},
-		ResourceRouting: {"reconcile": false},
+		ResourceAudit:       {ActionRead: false},
+		ResourceRouting:     {"reconcile": false},
+		"model_diagnostics": {"read": true, "create": true},
 	}, ExplicitUserPermissions(42))
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
@@ -190,8 +193,9 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ResourceTaskPlugin: {
 			ActionBind: false,
 		},
-		ResourceAudit:   {ActionRead: false},
-		ResourceRouting: {"reconcile": false},
+		ResourceAudit:       {ActionRead: false},
+		ResourceRouting:     {"reconcile": false},
+		"model_diagnostics": {"read": true, "create": true},
 	}, ExplicitUserPermissions(42))
 	assert.Empty(t, ExplicitUserOverrides(42))
 }
