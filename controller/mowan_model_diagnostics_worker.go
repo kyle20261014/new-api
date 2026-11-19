@@ -136,6 +136,20 @@ func (w *diagnosticResponse) Write(data []byte) (int, error) {
 	return w.body.Write(data)
 }
 
+// newDiagnosticChatRequest keeps the internal relay request on a relative path:
+// the relay copies c.Request.URL.String() into the upstream URL, so an absolute
+// internal URL would be appended to the channel base URL.
+func newDiagnosticChatRequest(ctx context.Context, body []byte) (*http.Request, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.RequestURI = "/v1/chat/completions"
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "127.0.0.1:0"
+	return request, nil
+}
+
 func executeDiagnosticStep(ctx context.Context, run *model.DiagnosticRun, step *model.DiagnosticStep, probe diagnostics.Probe, owner string) (map[string]any, bool) {
 	started := time.Now()
 	values := map[string]any{"state": "failed", "complete": false, "error_code": "diagnostic_request_failed"}
@@ -145,12 +159,10 @@ func executeDiagnosticStep(ctx context.Context, run *model.DiagnosticRun, step *
 	}
 	callCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	request, err := http.NewRequestWithContext(callCtx, http.MethodPost, "http://diagnostics.internal/v1/chat/completions", bytes.NewReader(body))
+	request, err := newDiagnosticChatRequest(callCtx, body)
 	if err != nil {
 		return values, false
 	}
-	request.Header.Set("Content-Type", "application/json")
-	request.RemoteAddr = "127.0.0.1:0"
 	response := &diagnosticResponse{header: http.Header{}}
 	engine := gin.New()
 	revoked := false
