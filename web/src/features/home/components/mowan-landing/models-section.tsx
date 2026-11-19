@@ -20,11 +20,14 @@ import { ArrowRight } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { RoutingExperience } from '@/features/mowan/smart-routing/routing-experience'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
-import { MODELS_ROW_1, MODELS_ROW_2 } from './data'
+import { useHomepageModels } from './model-catalog'
 import type { ModelCapsule } from './types'
 
 export interface ModelsSectionProps {
@@ -36,9 +39,7 @@ function ModelChip(props: {
   isDuplicate?: boolean
   onClick?: (model: ModelCapsule) => void
 }) {
-  const { t } = useTranslation()
   const model = props.model
-  const displayTag = model.tagKey ? t(model.tagKey, model.tag || '') : model.tag
 
   return (
     <Button
@@ -49,20 +50,11 @@ function ModelChip(props: {
       onClick={() => props.onClick?.(model)}
       className='xc-chip h-auto shrink-0'
     >
-      <span className='xc-model-icon'>
-        {typeof model.icon === 'string'
-          ? getLobeIcon(model.icon, 26)
-          : model.icon || (
-              <span
-                className='xc-mark size-2.5 shrink-0 rounded-full'
-                style={{ backgroundColor: model.color || '#38bdf8' }}
-              />
-            )}
-      </span>
+      <span className='xc-model-icon'>{getLobeIcon(model.icon, 26)}</span>
       <span className='xc-model-name whitespace-nowrap'>{model.name}</span>
-      {displayTag && (
+      {model.tag && (
         <span className='rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-normal text-slate-400'>
-          {displayTag}
+          {model.tag}
         </span>
       )}
     </Button>
@@ -71,6 +63,12 @@ function ModelChip(props: {
 
 export function ModelsSection(props: ModelsSectionProps) {
   const { t } = useTranslation()
+  const catalog = useHomepageModels()
+  const models = catalog.data ?? []
+  const rows = [
+    models.filter((_, i) => i % 2 === 0),
+    models.filter((_, i) => i % 2 === 1),
+  ]
   const [selectedModel, setSelectedModel] = useState<ModelCapsule | null>(null)
 
   const handleScrollTo = (id: string) => {
@@ -107,76 +105,75 @@ export function ModelsSection(props: ModelsSectionProps) {
         )}
       </p>
 
-      {/* Marquee Container with reference styling & keyboard accessibility */}
-      <div className='xc-model-marquee'>
-        {/* Row 1: Scrolling Left */}
-        <div
-          className='xc-model-lane no-scrollbar'
-          tabIndex={0}
-          role='region'
-          aria-label={`${t('mowan.nav.models', '模型')} 1`}
-        >
-          <div className='xc-model-track'>
-            <div className='xc-model-group'>
-              {MODELS_ROW_1.map((model) => (
-                <ModelChip
-                  key={`r1-${model.id}`}
-                  model={model}
-                  onClick={handleModelClick}
-                />
-              ))}
-            </div>
-            <div className='xc-model-group' aria-hidden='true'>
-              {MODELS_ROW_1.map((model) => (
-                <ModelChip
-                  key={`r1-dup-${model.id}`}
-                  model={model}
-                  isDuplicate
-                  onClick={handleModelClick}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+      {models.length > 0 && (
+        <p className='mb-4 text-sm text-slate-400'>
+          {t('mowan.models.catalogOrder')}
+        </p>
+      )}
+      {catalog.isLoading && <LoadingState />}
+      {catalog.isError && (
+        <ErrorState
+          title={t('mowan.models.catalogError')}
+          description={
+            catalog.data ? t('mowan.models.catalogCached') : undefined
+          }
+          onRetry={() => void catalog.refetch()}
+          className='min-h-0 py-4'
+        />
+      )}
+      {!catalog.isLoading && !catalog.isError && models.length === 0 && (
+        <EmptyState
+          title={t('mowan.models.catalogEmpty')}
+          className='min-h-0 py-4'
+        />
+      )}
 
-        {/* Row 2: Scrolling Right (Reverse) */}
-        <div
-          className='xc-model-lane xc-reverse no-scrollbar'
-          tabIndex={0}
-          role='region'
-          aria-label={`${t('mowan.nav.models', '模型')} 2`}
-        >
-          <div className='xc-model-track'>
-            <div className='xc-model-group'>
-              {MODELS_ROW_2.map((model) => (
-                <ModelChip
-                  key={`r2-${model.id}`}
-                  model={model}
-                  onClick={handleModelClick}
-                />
-              ))}
-            </div>
-            <div className='xc-model-group' aria-hidden='true'>
-              {MODELS_ROW_2.map((model) => (
-                <ModelChip
-                  key={`r2-dup-${model.id}`}
-                  model={model}
-                  isDuplicate
-                  onClick={handleModelClick}
-                />
-              ))}
-            </div>
-          </div>
+      {/* Marquee Container with reference styling & keyboard accessibility */}
+      {models.length > 0 && (
+        <div className='xc-model-marquee'>
+          {rows.map(
+            (row, rowIndex) =>
+              row.length > 0 && (
+                <div
+                  key={row[0].id}
+                  className={`xc-model-lane no-scrollbar${rowIndex === 1 ? ' xc-reverse' : ''}`}
+                  tabIndex={0}
+                  role='region'
+                  aria-label={`${t('mowan.nav.models', '模型')} ${rowIndex + 1}`}
+                >
+                  <div className='xc-model-track'>
+                    <div className='xc-model-group'>
+                      {row.map((model) => (
+                        <ModelChip
+                          key={`r1-${model.id}`}
+                          model={model}
+                          onClick={handleModelClick}
+                        />
+                      ))}
+                    </div>
+                    <div className='xc-model-group' aria-hidden='true'>
+                      {row.map((model) => (
+                        <ModelChip
+                          key={`r1-dup-${model.id}`}
+                          model={model}
+                          isDuplicate
+                          onClick={handleModelClick}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )
+          )}
         </div>
-      </div>
+      )}
 
       {/* Placeholder Feedback */}
       {selectedModel && (
         <RoutingExperience
           key={selectedModel.id}
-          model={selectedModel.name}
-          canChat={selectedModel.category === 'chat'}
-          modelIsDisplayName
+          model={selectedModel.id}
+          canChat={selectedModel.canChat}
           open
           onOpenChange={(open) => {
             if (!open) setSelectedModel(null)

@@ -31,6 +31,8 @@ type Pricing struct {
 	Icon                   string                               `json:"icon,omitempty"`
 	Tags                   string                               `json:"tags,omitempty"`
 	VendorID               int                                  `json:"vendor_id,omitempty"`
+	CatalogCreatedTime     int64                                `json:"catalog_created_time,omitempty"` // Exact catalog record creation, not release date.
+	DeclaredChatEndpoint   bool                                 `json:"-"`                              // Model-level evidence, never inferred from channel protocols.
 	QuotaType              int                                  `json:"quota_type"`
 	ModelRatio             float64                              `json:"model_ratio"`
 	ModelPrice             float64                              `json:"model_price"`
@@ -117,6 +119,26 @@ func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 		return endpoints
 	}
 	return make([]constant.EndpointType, 0)
+}
+
+func hasDeclaredChatEndpoint(metadata *Model) bool {
+	if metadata.NameRule != NameRuleExact {
+		return false
+	}
+	var endpoints map[string]any
+	if err := common.UnmarshalJsonStr(metadata.Endpoints, &endpoints); err != nil {
+		return false
+	}
+	chat, _ := common.GetDefaultEndpointInfo(constant.EndpointTypeOpenAI)
+	switch endpoint := endpoints[string(constant.EndpointTypeOpenAI)].(type) {
+	case string:
+		return endpoint == chat.Path
+	case map[string]any:
+		method, specified := endpoint["method"]
+		return endpoint["path"] == chat.Path && (!specified || method == chat.Method)
+	default:
+		return false
+	}
 }
 
 func getPricingEndpointTypesForAbility(ability AbilityWithChannel, advancedCustomConfigs map[int]*dto.AdvancedCustomConfig) []constant.EndpointType {
@@ -342,6 +364,10 @@ func updatePricing() {
 			pricing.Icon = meta.Icon
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
+			pricing.DeclaredChatEndpoint = hasDeclaredChatEndpoint(meta)
+			if meta.NameRule == NameRuleExact {
+				pricing.CatalogCreatedTime = meta.CreatedTime
+			}
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice {
