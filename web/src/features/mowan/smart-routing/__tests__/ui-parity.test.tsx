@@ -104,7 +104,7 @@ test('strategy choices keep their order and help opens a named dialog without ch
   })
   expect(
     within(help).getByText(
-      /Speed and success rate use call records from the last 24 hours/
+      /Speed uses successful calls from the last hour; success rate uses call records from the last 24 hours/
     )
   ).toBeInTheDocument()
   expect(
@@ -127,7 +127,7 @@ test('strategy choices keep their order and help opens a named dialog without ch
   expect(changed).not.toHaveBeenCalled()
 })
 
-test('speed guidance distinguishes the rolling 24-hour ranking window from the 1-hour candidate response display', async () => {
+test('speed guidance uses one hour and preserves the 24-hour reliability window', async () => {
   mount({ ...initial, strategy: 'speed' })
   expect(
     screen.getByText('Prefers groups that have responded faster recently.', {
@@ -141,7 +141,7 @@ test('speed guidance distinguishes the rolling 24-hour ranking window from the 1
   })
   expect(
     within(help).getByText(
-      /Speed and success rate use call records from the last 24 hours/
+      /Speed uses successful calls from the last hour; success rate uses call records from the last 24 hours/
     )
   ).toBeVisible()
   expect(
@@ -150,7 +150,7 @@ test('speed guidance distinguishes the rolling 24-hour ranking window from the 1
   await user.click(within(help).getByRole('button', { name: 'Close' }))
   await user.click(screen.getByRole('button', { name: 'Exclusion settings' }))
   await screen.findByRole('checkbox', { name: 'Select chat / standard' })
-  expect(screen.getByText('Time to start replying · Last hour')).toBeVisible()
+  expect(screen.getByTitle('Time to start replying · Last hour')).toBeVisible()
 })
 
 test('whole-model restore removes hidden and invalid pairs across pages without changing other models or global rules', async () => {
@@ -270,13 +270,13 @@ test('exclusion changes are isolated until save; unknown saved rules remain visi
     await screen.findByRole('checkbox', { name: 'Select chat / standard' })
   ).toBeChecked()
   await user.click(
-    screen.getByRole('button', { name: 'Restore model retired-model' })
-  )
-  await user.click(
     screen.getByRole('button', { name: 'Restore global group retired-global' })
   )
   await user.click(
     screen.getByRole('button', { name: 'Restore retired-model / retired-pair' })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Restore model retired-model' })
   )
   await user.click(screen.getByRole('button', { name: 'Apply exclusions' }))
   expect(changed).toHaveBeenLastCalledWith({
@@ -298,6 +298,29 @@ test('page exclusion actions preserve model and global rules, hidden pairs, and 
   }
   const changed = mount(value)
   vi.mocked(api.get).mockImplementation(async (_url, config) => {
+    if (_url.endsWith('/models')) {
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [
+              {
+                model: 'chat',
+                display_name: 'Chat',
+                category: 'text',
+                group_count: 3,
+              },
+              {
+                model: 'blocked',
+                display_name: 'Blocked',
+                category: 'text',
+                group_count: 1,
+              },
+            ],
+          },
+        },
+      }
+    }
     const params = config?.params as { p?: number }
     const page = params.p ?? 1
     return {
@@ -359,29 +382,33 @@ test('custom cancel does not change the selected strategy; both steps keep sched
     await screen.findByRole('checkbox', { name: 'Select chat / standard' })
   )
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
+    expect(
+      screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+    ).toBeEnabled()
   )
-  await user.click(screen.getByRole('button', { name: 'Next' }))
   await user.click(
-    screen.getByRole('combobox', { name: 'Apply scheduling to all models' })
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
   )
-  await user.click(await screen.findByRole('option', { name: 'Manual order' }))
+  await user.click(screen.getByRole('button', { name: 'Manual order' }))
   await user.click(
     screen.getByRole('switch', {
-      name: 'Try temporarily offline groups for chat',
+      name: 'Try chat / standard while temporarily offline',
     })
   )
   await user.click(screen.getByRole('button', { name: 'Previous step' }))
-  await user.click(screen.getByRole('button', { name: 'Next' }))
-  expect(
-    screen.getByRole('combobox', { name: 'Scheduling for chat' })
-  ).toHaveTextContent('Manual order')
+  await user.click(
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+  )
+  expect(screen.getByRole('button', { name: 'Manual order' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   expect(
     screen.getByRole('switch', {
-      name: 'Try temporarily offline groups for chat',
+      name: 'Try chat / standard while temporarily offline',
     })
   ).toBeChecked()
-  await user.click(screen.getByRole('button', { name: 'Remove model chat' }))
+  await user.click(screen.getByRole('button', { name: 'Remove standard' }))
   expect(
     screen.getByRole('button', { name: 'Use this configuration' })
   ).toBeDisabled()

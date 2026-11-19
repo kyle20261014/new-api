@@ -54,13 +54,20 @@ type CatalogPrice struct {
 	Rule   string   `json:"rule,omitempty"`
 }
 type CatalogQuote struct {
-	Comparison     string         `json:"comparison"`
-	Reason         string         `json:"reason,omitempty"`
-	EstimatedTotal *float64       `json:"estimated_total,omitempty"`
-	Currency       string         `json:"currency"`
-	Prices         []CatalogPrice `json:"prices"`
-	Cost           float64        `json:"-"`
-	Basis          string         `json:"-"`
+	Comparison     string             `json:"comparison"`
+	Reason         string             `json:"reason,omitempty"`
+	EstimatedTotal *float64           `json:"estimated_total,omitempty"`
+	Currency       string             `json:"currency"`
+	Prices         []CatalogPrice     `json:"prices"`
+	Cost           float64            `json:"-"`
+	Basis          string             `json:"-"`
+	Expression     *CatalogExpression `json:"expression,omitempty"`
+}
+type CatalogExpression struct {
+	Rule        string                               `json:"rule"`
+	GroupRatio  float64                              `json:"group_ratio"`
+	Task        bool                                 `json:"task"`
+	UsageSchema map[string]jsplugin.UsageFieldSchema `json:"usage_schema,omitempty"`
 }
 type CatalogMetrics struct {
 	ProtocolClass     string   `json:"protocol_class"`
@@ -78,17 +85,19 @@ type CatalogVariant struct {
 	OperationKey string `json:"operation_key"`
 	Health       string `json:"health"`
 	CatalogMetrics
-	Quote          CatalogQuote                   `json:"quote"`
-	Key            model.RoutingMetricKey         `json:"-"`
-	ChannelIDs     []int                          `json:"-"`
-	Observation    []smartrouting.RankObservation `json:"-"`
-	PluginKey      string                         `json:"-"`
-	BillingModel   string                         `json:"-"`
-	PriceAmbiguous bool                           `json:"-"`
+	Quote          CatalogQuote                         `json:"quote"`
+	Key            model.RoutingMetricKey               `json:"-"`
+	ChannelIDs     []int                                `json:"-"`
+	Observation    []smartrouting.RankObservation       `json:"-"`
+	PluginKey      string                               `json:"-"`
+	BillingModel   string                               `json:"-"`
+	PriceAmbiguous bool                                 `json:"-"`
+	UsageSchema    map[string]jsplugin.UsageFieldSchema `json:"-"`
 }
 type CatalogCandidate struct {
 	Model       string           `json:"model"`
 	DisplayName string           `json:"display_name"`
+	Icon        string           `json:"icon,omitempty"`
 	Category    string           `json:"category"`
 	Group       string           `json:"group"`
 	Available   bool             `json:"available"`
@@ -221,7 +230,16 @@ func routingCatalogIdentity(db *gorm.DB, req CatalogRequest) (model.User, *model
 	return user, &token, nil
 }
 
-func routingCatalogItems(ctx context.Context, req CatalogRequest) ([]CatalogCandidate, error) {
+type catalogAccess struct {
+	user      model.User
+	token     *model.Token
+	groups    []string
+	abilities []model.Ability
+	channels  map[int]*model.Channel
+	names     []string
+}
+
+func loadCatalogAccess(ctx context.Context, req CatalogRequest) (*catalogAccess, error) {
 	if model.DB == nil {
 		return nil, errors.New("routing catalog database unavailable")
 	}
@@ -259,7 +277,7 @@ func routingCatalogItems(ctx context.Context, req CatalogRequest) ([]CatalogCand
 		names = append(names, a.Model)
 	}
 	if len(ids) == 0 {
-		return []CatalogCandidate{}, nil
+		return &catalogAccess{user: user, token: token, groups: groups}, nil
 	}
 	var channels []model.Channel
 	// Never load credentials or upstream addresses into this read-only view.
@@ -270,6 +288,109 @@ func routingCatalogItems(ctx context.Context, req CatalogRequest) ([]CatalogCand
 	for i := range channels {
 		byID[channels[i].Id] = &channels[i]
 	}
+	return &catalogAccess{user, token, groups, abilities, byID, names}, nil
+}
+
+type CatalogModel struct {
+	Model       string `json:"model"`
+	DisplayName string `json:"display_name"`
+	Icon        string `json:"icon,omitempty"`
+	Category    string `json:"category"`
+	GroupCount  int    `json:"group_count"`
+}
+
+func RoutingCatalogModels(ctx context.Context, req CatalogRequest) ([]CatalogModel, error) {
+	// The navigation is independent of candidate filters, exclusions and pagination.
+	req.Model, req.Search, req.Category = "", "", "all"
+	a, err := loadCatalogAccess(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := model.ResolveCatalogMetadata(model.DB.WithContext(ctx), a.names)
+	if err != nil {
+		return nil, err
+	}
+	groups := map[string]map[string]bool{}
+	endpoints := map[string][]constant.EndpointType{}
+	advanced := map[int]*dto.AdvancedCustomConfig{}
+	for id, ch := range a.channels {
+		if ch.Type == constant.ChannelTypeAdvancedCustom {
+			var settings dto.ChannelOtherSettings
+			if common.UnmarshalJsonStr(ch.OtherSettings, &settings) == nil {
+				advanced[id] = settings.AdvancedCustom
+			}
+		}
+	}
+	for _, ability := range a.abilities {
+		name := ability.Model
+		if a.token != nil && !catalogTokenAllows(a.token, name) {
+			continue
+		}
+		if m := metadata[name]; m != nil && m.Status != 1 {
+			continue
+		}
+		ch := a.channels[ability.ChannelId]
+		if ch == nil {
+			continue
+		}
+		if req.Constraints != nil {
+			if pin, has, _ := req.Constraints.ResolvedPin(); has && pin.ChannelId != ch.Id {
+				continue
+			}
+			if ok, _ := model.ChannelSatisfiesFilters(ch, name, req.Constraints.Filters); !ok {
+				continue
+			}
+		}
+		if groups[name] == nil {
+			groups[name] = map[string]bool{}
+		}
+		using := []string{ability.Group}
+		if ability.Group == "all" {
+			using = a.groups
+		}
+		for _, group := range using {
+			if slices.Contains(a.groups, group) {
+				groups[name][group] = true
+			}
+		}
+		types := common.GetEndpointTypesByChannelType(ch.Type, name)
+		if config := advanced[ch.Id]; config != nil {
+			types = config.SupportedEndpointTypesForModel(name)
+		}
+		endpoints[name] = append(endpoints[name], types...)
+	}
+	out := []CatalogModel{}
+	for name, using := range groups {
+		if len(using) == 0 {
+			continue
+		}
+		item := CatalogModel{Model: name, DisplayName: name, Category: catalogCategory(model.Pricing{ModelName: name, SupportedEndpointTypes: endpoints[name]}), GroupCount: len(using)}
+		if m := metadata[name]; m != nil {
+			item.Icon = m.Icon
+			var declared map[string]any
+			if common.UnmarshalJsonStr(m.Endpoints, &declared) == nil {
+				for endpoint, value := range declared {
+					switch value.(type) {
+					case string, map[string]any:
+						endpoints[name] = append(endpoints[name], constant.EndpointType(endpoint))
+					}
+				}
+				item.Category = catalogCategory(model.Pricing{ModelName: name, SupportedEndpointTypes: endpoints[name]})
+			}
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Model < out[j].Model })
+	return out, nil
+}
+
+func routingCatalogItems(ctx context.Context, req CatalogRequest) ([]CatalogCandidate, error) {
+	a, err := loadCatalogAccess(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	user, token, groups, abilities, byID, names := a.user, a.token, a.groups, a.abilities, a.channels, a.names
+	db := model.DB.WithContext(ctx)
 	// Reuse public metadata, then resolve saved effective prices via the billing resolver.
 	public := make(map[string]model.Pricing)
 	for _, p := range model.GetPricing() {
@@ -332,7 +453,7 @@ func routingCatalogItems(ctx context.Context, req CatalogRequest) ([]CatalogCand
 			id := name + "\x00" + group
 			candidate := candidates[id]
 			if candidate == nil {
-				candidate = &CatalogCandidate{Model: name, DisplayName: name, Category: category, Group: group, Available: true, Health: "unknown", Metrics: catalogUnknownMetrics("unknown")}
+				candidate = &CatalogCandidate{Model: name, DisplayName: name, Icon: p.Icon, Category: category, Group: group, Available: true, Health: "unknown", Metrics: catalogUnknownMetrics("unknown")}
 				candidates[id] = candidate
 			}
 			candidate.ChannelIDs = append(candidate.ChannelIDs, ch.Id)
@@ -361,14 +482,6 @@ func routingCatalogItems(ctx context.Context, req CatalogRequest) ([]CatalogCand
 			sort.Ints(v.ChannelIDs)
 			v.ChannelIDs = slices.Compact(v.ChannelIDs)
 			entry := prices[candidate.Model]
-			if v.PluginKey != "" {
-				configured := slices.ContainsFunc(entry.PluginVariants, func(p model.ModelPricingPluginVariant) bool {
-					return p.PluginKey == v.PluginKey && p.Compatible && !p.Stale && p.Effective != ""
-				})
-				if e, exists := prices[v.BillingModel]; exists && !configured {
-					entry = e
-				}
-			}
 			v.Quote = catalogQuote(entry, *v, ratio, req)
 			catalogFoldVariant(db, v, now)
 		}
@@ -676,7 +789,11 @@ func catalogChannelVariants(req CatalogRequest, name, group string, ch *model.Ch
 				if slices.ContainsFunc(out, func(v CatalogVariant) bool { return v.Key == key }) {
 					continue
 				}
-				out = append(out, CatalogVariant{ProviderKey: key.ProviderKey, OperationKey: operation, Health: "unknown", CatalogMetrics: catalogUnknownMetrics(protocol), Key: key, ChannelIDs: []int{ch.Id}, PluginKey: provider.plugin, BillingModel: provider.model})
+				v := CatalogVariant{ProviderKey: key.ProviderKey, OperationKey: operation, Health: "unknown", CatalogMetrics: catalogUnknownMetrics(protocol), Key: key, ChannelIDs: []int{ch.Id}, PluginKey: provider.plugin, BillingModel: billingModel}
+				if plugin, ok := g.Get(provider.plugin); ok {
+					v.UsageSchema, _ = plugin.Meta.UsageForModels(billingModel, name)
+				}
+				out = append(out, v)
 			}
 		}
 	}
@@ -698,14 +815,9 @@ func catalogQuote(entry model.ModelPricingEntry, v CatalogVariant, ratio float64
 	mode, _ := effective["billing_setting.billing_mode"].(string)
 	task := v.PluginKey != ""
 	if task {
-		expression = ""
-		for _, variant := range entry.PluginVariants {
-			if variant.PluginKey == v.PluginKey && !variant.Stale && variant.Compatible {
-				expression = variant.Effective
-				break
-			}
-		}
-		if expression == "" {
+		var configured bool
+		expression, configured = billing_setting.ResolveTaskBillingExpr(v.PluginKey, v.Key.ClientModel, v.BillingModel)
+		if !configured || strings.TrimSpace(expression) == "" {
 			q.Reason = "provider_price_unavailable"
 			return q
 		}
@@ -719,11 +831,16 @@ func catalogQuote(entry model.ModelPricingEntry, v CatalogVariant, ratio float64
 			q.Reason = "billing_expression_invalid"
 			return q
 		}
+		q.Expression = &CatalogExpression{Rule: expression, GroupRatio: ratio, Task: task, UsageSchema: v.UsageSchema}
+		if task && !billing_setting.TaskExprCompatible(expression, v.UsageSchema) {
+			q.Reason = "provider_usage_incompatible"
+			return q
+		}
 		unit := "USD (expression)"
 		if task {
 			unit = "USD (task usage)"
 		}
-		q.Prices = append(q.Prices, CatalogPrice{Label: "billing_expression", Unit: unit, Rule: expression + "; group_ratio=" + strconv.FormatFloat(ratio, 'g', -1, 64)})
+		q.Prices = append(q.Prices, CatalogPrice{Label: "billing_expression", Unit: unit, Rule: expression})
 		q.Basis = "expression:" + expression + ":" + strconv.FormatBool(task) + ":" + v.ProviderKey
 		q.Comparison, q.Reason, q.Cost = "available", "same_billing_contract", ratio
 		if req.Request != nil && !task && v.Key.OperationKey == "chat" {
@@ -926,9 +1043,9 @@ func catalogFoldVariant(db *gorm.DB, v *CatalogVariant, now time.Time) {
 			v.Observation = append(v.Observation, observation)
 			continue
 		}
-		observation.Eligible, observation.Success, observation.SpeedSamples = day.Eligible, day.Success, day.SpeedSamples
-		if day.SpeedSamples > 0 {
-			observation.MeanMS = day.SpeedTotalMS / float64(day.SpeedSamples)
+		observation.Eligible, observation.Success, observation.SpeedSamples = day.Eligible, day.Success, hour.SpeedSamples
+		if hour.SpeedSamples > 0 {
+			observation.MeanMS = hour.SpeedTotalMS / float64(hour.SpeedSamples)
 		}
 		observation.Response1hSamples = hour.SpeedSamples
 		if hour.SpeedSamples > 0 {
@@ -1006,6 +1123,7 @@ func catalogFoldCandidate(c *CatalogCandidate) {
 	}
 	c.Reason = "mixed_provider_operation"
 	if c.Quote.Reason == "mixed_provider_pricing" {
+		c.Quote.Expression = nil
 		c.Quote.Prices = catalogPriceRanges(c.Variants)
 	}
 	c.Health = "unknown"
@@ -1099,7 +1217,7 @@ func RoutingCatalogPreview(ctx context.Context, req CatalogPreviewRequest) (Cata
 	}
 	strategy := req.Routing.Strategy
 	order := []string{}
-	tryOffline := false
+	var tryOffline []string
 	if req.Routing.Mode == "fixed" {
 		strategy = "manual"
 		group := *req.Routing.FixedGroup
@@ -1117,12 +1235,12 @@ func RoutingCatalogPreview(ctx context.Context, req CatalogPreviewRequest) (Cata
 		if !ok {
 			return out, errors.New("routing_model_not_configured")
 		}
-		strategy, order, tryOffline = policy.Strategy, policy.Groups, policy.TrySoftOffline
+		strategy, order, tryOffline = policy.Strategy, policy.Groups, policy.TrySoftOfflineGroups
 	}
 	ranked := []smartrouting.RankCandidate{}
 	byGroup := map[string]CatalogCandidate{}
 	for _, c := range items {
-		if len(order) > 0 && !slices.Contains(order, c.Group) || slices.Contains(req.Routing.ExcludedModels, c.Model) || slices.Contains(req.Routing.ExcludedGroups, c.Group) || slices.Contains(req.Routing.ExcludedModelGroups[c.Model], c.Group) || c.Health == "soft_offline" && !tryOffline {
+		if len(order) > 0 && !slices.Contains(order, c.Group) || slices.Contains(req.Routing.ExcludedModels, c.Model) || slices.Contains(req.Routing.ExcludedGroups, c.Group) || slices.Contains(req.Routing.ExcludedModelGroups[c.Model], c.Group) || c.Health == "soft_offline" && !slices.Contains(tryOffline, c.Group) {
 			continue
 		}
 		byGroup[c.Group] = c

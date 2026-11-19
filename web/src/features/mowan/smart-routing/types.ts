@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import type { BillingUsageSchema } from '@/features/pricing/types'
+
 export const dynamicStrategySchema = z.enum([
   'balanced',
   'price',
@@ -14,44 +16,61 @@ export const modelRoutingSchema = z
   .object({
     groups: z.array(groupSchema).min(1).max(100),
     strategy: z.enum(['balanced', 'price', 'speed', 'success', 'manual']),
-    try_soft_offline: z.boolean().default(false),
+    try_soft_offline_groups: z.array(groupSchema).max(100).default([]),
   })
   .strict()
-export const routingSchema = z.union([
-  z
-    .object({
-      schema_version: z.literal(1),
-      mode: z.literal('fixed'),
-      fixed_group: z.string(),
-    })
-    .strict(),
-  z
-    .object({
-      schema_version: z.literal(1),
-      mode: z.literal('smart'),
-      strategy: dynamicStrategySchema,
-      excluded_models: z.array(z.string().min(1)).max(200).optional(),
-      excluded_groups: z.array(groupSchema).max(100).optional(),
-      excluded_model_groups: z
-        .record(z.string().min(1), z.array(groupSchema).max(100))
-        .refine((models) => Object.keys(models).length <= 200)
-        .optional(),
-    })
-    .strict(),
-  z
-    .object({
-      schema_version: z.literal(1),
-      mode: z.literal('smart'),
-      strategy: z.literal('custom'),
-      models: z
-        .record(z.string().min(1), modelRoutingSchema)
-        .refine(
-          (models) =>
-            Object.keys(models).length > 0 && Object.keys(models).length <= 200
-        ),
-    })
-    .strict(),
-])
+  .refine(
+    (config) =>
+      new Set(config.groups).size === config.groups.length &&
+      new Set(config.try_soft_offline_groups).size ===
+        config.try_soft_offline_groups.length &&
+      config.try_soft_offline_groups.every((group) =>
+        config.groups.includes(group)
+      )
+  )
+export const routingSchema = z
+  .union([
+    z
+      .object({
+        schema_version: z.literal(1),
+        mode: z.literal('fixed'),
+        fixed_group: z.string(),
+      })
+      .strict(),
+    z
+      .object({
+        schema_version: z.literal(1),
+        mode: z.literal('smart'),
+        strategy: dynamicStrategySchema,
+        excluded_models: z.array(z.string().min(1)).max(200).optional(),
+        excluded_groups: z.array(groupSchema).max(100).optional(),
+        excluded_model_groups: z
+          .record(z.string().min(1), z.array(groupSchema).max(100))
+          .refine((models) => Object.keys(models).length <= 200)
+          .optional(),
+      })
+      .strict(),
+    z
+      .object({
+        schema_version: z.literal(1),
+        mode: z.literal('smart'),
+        strategy: z.literal('custom'),
+        models: z
+          .record(z.string().min(1), modelRoutingSchema)
+          .refine(
+            (models) =>
+              Object.keys(models).length > 0 &&
+              Object.keys(models).length <= 200
+          ),
+      })
+      .strict(),
+  ])
+  .refine(
+    (policy) =>
+      !('models' in policy) ||
+      new Set(Object.values(policy.models).map((config) => config.strategy))
+        .size === 1
+  )
 export type RoutingPolicy = z.infer<typeof routingSchema>
 export type DynamicStrategy = z.infer<typeof dynamicStrategySchema>
 export type ModelRouting = z.infer<typeof modelRoutingSchema>
@@ -89,6 +108,7 @@ export interface RoutingPrice {
 export interface RoutingCandidate {
   model: string
   display_name: string
+  icon?: string
   category: Exclude<ModelCategory, 'all'>
   group: string
   available: boolean
@@ -99,6 +119,12 @@ export interface RoutingCandidate {
     estimated_total?: number
     currency: 'USD'
     prices: RoutingPrice[]
+    expression?: {
+      rule: string
+      group_ratio: number
+      task: boolean
+      usage_schema?: BillingUsageSchema
+    }
   }
   metrics: RoutingMetrics
   variants?: Array<
@@ -106,9 +132,17 @@ export interface RoutingCandidate {
       provider_key: string
       operation_key: string
       health: RoutingHealth
+      quote?: RoutingCandidate['quote']
     }
   >
   reason?: string
+}
+export interface RoutingModel {
+  model: string
+  display_name: string
+  icon?: string
+  category: Exclude<ModelCategory, 'all'>
+  group_count: number
 }
 export interface CandidatePage {
   items: RoutingCandidate[]

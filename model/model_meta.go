@@ -99,6 +99,15 @@ func resolveModelMetadata(records []Model, names []string) map[string]*Model {
 	return resolved
 }
 
+// ResolveCatalogMetadata reads only presentation/visibility metadata, never prices.
+func ResolveCatalogMetadata(db *gorm.DB, names []string) (map[string]*Model, error) {
+	var records []Model
+	if err := db.Select("model_name", "name_rule", "status", "icon", "endpoints").Order("id").Find(&records).Error; err != nil {
+		return nil, err
+	}
+	return resolveModelMetadata(records, names), nil
+}
+
 // FillModelSquareStates applies the same metadata policy as the public catalog
 // to live routes, then aggregates concrete models for metadata rule rows.
 func FillModelSquareStates(rows []*Model, configured map[string][]int, connections []ModelConnection) error {

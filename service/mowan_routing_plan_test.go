@@ -134,6 +134,54 @@ func TestRoutingPlanInitialRetryDedupAndFiniteExhaustion(t *testing.T) {
 	}
 }
 
+func TestRoutingGroupOfflinePreferenceDoesNotLeakAndRespectsHardGates(t *testing.T) {
+	for _, condition := range []string{"independent", "occupied", "disabled", "revoked"} {
+		t.Run(condition, func(t *testing.T) {
+			db, newContext := setupRoutingPlanTest(t)
+			createChannelSelectAutoGroupsChannel(t, db, 3981, "default", "routing-test")
+			createChannelSelectAutoGroupsChannel(t, db, 3982, "vip", "routing-test")
+			require.NoError(t, db.Model(&model.TokenRouting{}).Where("token_id = ?", 102).Update("policy_json", `{"schema_version":1,"mode":"smart","strategy":"custom","models":{"routing-test":{"strategy":"manual","groups":["default","vip"],"try_soft_offline_groups":["vip"]}}}`).Error)
+			store := model.RoutingMetricsStore{DB: db}
+			key := model.RoutingMetricKey{ClientModel: "routing-test", BusinessGroup: "vip", ProtocolClass: "sync", ProviderKey: "builtin:1:v1", OperationKey: "chat"}
+			for _, group := range []string{"default", "vip"} {
+				k := key
+				k.BusinessGroup = group
+				for _, id := range []string{"one", "two", "three"} {
+					_, err := store.ApplyHealthEvent(model.RoutingHealthInput{Key: k, Stage: model.RoutingStageAttempt, EventID: group + id, Outcome: "failure", Sent: true}, time.Time{})
+					require.NoError(t, err)
+				}
+			}
+			switch condition {
+			case "occupied":
+				_, claimed, err := store.ClaimProbeExplicit(key, model.RoutingStageAttempt, "another-owner", time.Time{})
+				require.NoError(t, err)
+				require.True(t, claimed)
+			case "disabled":
+				require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 3982).Update("status", common.ChannelStatusManuallyDisabled).Error)
+			case "revoked":
+				require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
+			}
+			model.InitChannelCache()
+			c := newContext()
+			channel, group, err := SelectChannelForRequest(c, "routing-test", &RetryParam{})
+			if condition != "independent" {
+				require.Nil(t, channel)
+				require.NotNil(t, err)
+				return
+			}
+			require.Nil(t, err)
+			require.Equal(t, "vip", group)
+			require.Equal(t, 3982, channel.Id)
+			c.Set("channel_id", channel.Id)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, channel.Key)
+			require.NoError(t, BeginRoutingSend(c))
+			view, readErr := store.ReadHealth(key, model.RoutingStageAttempt, 0, time.Time{})
+			require.NoError(t, readErr)
+			require.Equal(t, model.RoutingHealthHalfOpen, view.Health.State)
+		})
+	}
+}
+
 func TestRoutingPlanBudgetAndAuthoritySurviveConfigurationVersion(t *testing.T) {
 	db, newContext := setupRoutingPlanTest(t)
 	createChannelSelectAutoGroupsChannel(t, db, 3201, "vip", "routing-test")
@@ -198,7 +246,12 @@ func TestRoutingAffinityModesRevalidateBindingAndRecordOnlySuccess(t *testing.T)
 				createChannelSelectAutoGroupsChannel(t, db, 3901, "default", "routing-test")
 				createChannelSelectAutoGroupsChannel(t, db, 3902, "vip", "routing-test")
 				model.InitChannelCache()
-				policy := smartrouting.Policy{SchemaVersion: 1, Mode: "smart", Strategy: "custom", Models: map[string]smartrouting.ModelPolicy{"routing-test": {Strategy: "manual", Groups: []string{"default", "vip"}, TrySoftOffline: change == "soft_allowed"}}}
+				policy := smartrouting.Policy{SchemaVersion: 1, Mode: "smart", Strategy: "custom", Models: map[string]smartrouting.ModelPolicy{"routing-test": {Strategy: "manual", Groups: []string{"default", "vip"}}}}
+				if change == "soft_allowed" {
+					mp := policy.Models["routing-test"]
+					mp.TrySoftOfflineGroups = []string{"vip"}
+					policy.Models["routing-test"] = mp
+				}
 				if change == "policy_removed" {
 					policy.Models["routing-test"] = smartrouting.ModelPolicy{Strategy: "manual", Groups: []string{"default"}}
 				}

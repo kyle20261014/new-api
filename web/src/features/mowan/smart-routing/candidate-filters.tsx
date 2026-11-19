@@ -2,14 +2,15 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { getLobeIcon } from '@/lib/lobe-icon'
 
-import type { ModelCategory } from './types'
+import type { ModelCategory, RoutingModel } from './types'
 
 export function CandidateFilters(props: {
   search: string
   category: ModelCategory
   model: string
-  models: string[]
+  models: RoutingModel[]
   onSearch: (value: string) => void
   onCategory: (value: ModelCategory) => void
   onModel: (value: string) => void
@@ -23,7 +24,7 @@ export function CandidateFilters(props: {
     { value: 'audio' as const, label: t('Audio') },
   ]
   return (
-    <div className='space-y-3 border-b pb-4'>
+    <div className='shrink-0 space-y-2 border-b px-4 py-2'>
       <div className='flex flex-wrap items-center justify-between gap-3'>
         <div
           role='group'
@@ -49,7 +50,7 @@ export function CandidateFilters(props: {
           placeholder={t('Search model name')}
           value={props.search}
           maxLength={128}
-          className='min-h-11 w-full rounded-full sm:w-64'
+          className='min-h-11 w-full sm:w-64'
           onChange={(event) => props.onSearch(event.target.value)}
         />
       </div>
@@ -67,16 +68,22 @@ export function CandidateFilters(props: {
         >
           {t('All models')}
         </Button>
-        {props.models.map((name) => (
+        {props.models.map((item) => (
           <Button
-            key={name}
+            key={item.model}
             type='button'
-            variant={props.model === name ? 'secondary' : 'outline'}
+            variant={props.model === item.model ? 'secondary' : 'outline'}
             className='h-auto min-h-11 max-w-full rounded-full break-all whitespace-normal'
-            aria-pressed={props.model === name}
-            onClick={() => props.onModel(name)}
+            aria-pressed={props.model === item.model}
+            onClick={() => props.onModel(item.model)}
           >
-            {name}
+            <span aria-hidden='true'>{getLobeIcon(item.icon ?? '', 18)}</span>
+            <span className='min-w-0 truncate' title={item.model}>
+              {item.display_name || item.model}
+            </span>
+            <span className='text-muted-foreground text-xs'>
+              {item.group_count}
+            </span>
           </Button>
         ))}
       </div>

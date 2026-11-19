@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -51,6 +52,7 @@ type tokenResponse struct {
 	Routing               common.RawMessage `json:"routing"`
 	RoutingVersion        int64             `json:"routing_version"`
 	AllowRoutingSelfWrite bool              `json:"allow_routing_self_write"`
+	RoutingRequiresUpdate bool              `json:"routing_requires_update,omitempty"`
 }
 
 func maxTokenQuota() int {
@@ -535,7 +537,7 @@ func UpdateToken(c *gin.Context) {
 		}
 		cleanToken = &current
 		row, err := model.GetTokenRouting(tx, cleanToken.Id)
-		if err != nil {
+		if err != nil && !errors.Is(err, model.ErrRoutingPolicyNeedsUpdate) {
 			return err
 		}
 		previousAllowSelfWrite = row != nil && row.AllowSelfWrite

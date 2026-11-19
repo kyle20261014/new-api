@@ -2,7 +2,29 @@ import { expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { getSelectedRoutingCandidates, previewRouting } from '../api'
+import {
+  getRoutingModels,
+  getSelectedRoutingCandidates,
+  previewRouting,
+} from '../api'
+
+test('complete model navigation requests the authorized index with the same Key and cancellation signal', async () => {
+  const items = Array.from({ length: 120 }, (_, index) => ({
+    model: `model-${index}`,
+    display_name: `model-${index}`,
+    category: 'text',
+    group_count: 2,
+  }))
+  const get = vi
+    .spyOn(api, 'get')
+    .mockResolvedValue({ data: { success: true, data: { items } } })
+  const signal = new AbortController().signal
+  expect(await getRoutingModels(8, signal)).toEqual(items)
+  expect(get).toHaveBeenCalledExactlyOnceWith(
+    '/api/mowan/smart-routing/models',
+    { params: { token_id: 8 }, signal, disableDuplicate: true }
+  )
+})
 
 test('preview forwards a read-only policy and strips legacy group fields from the actual request quote', async () => {
   const post = vi.spyOn(api, 'post').mockResolvedValue({

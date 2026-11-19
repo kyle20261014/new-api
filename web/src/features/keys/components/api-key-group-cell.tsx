@@ -38,6 +38,7 @@ type ApiKeyGroupCellProps = {
   crossGroupRetry: boolean
   group: string
   routing?: RoutingPolicy | null
+  routingRequiresUpdate?: boolean
   ratio?: GroupRatio
   shouldReduceMotion: boolean
 }
@@ -45,6 +46,16 @@ type ApiKeyGroupCellProps = {
 export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
   const { t, i18n } = useTranslation()
   const isMobile = useMediaQuery('(max-width: 640px)')
+
+  if (props.routingRequiresUpdate) {
+    return (
+      <StatusBadge
+        label={t('Routing needs update')}
+        variant='warning'
+        copyable={false}
+      />
+    )
+  }
 
   if (props.routing) {
     const routing = props.routing

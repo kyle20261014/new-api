@@ -108,12 +108,13 @@ func tokenRoutingError(c *gin.Context, err error) {
 func loadMaskedTokenResponse(db *gorm.DB, token *model.Token) (*tokenResponse, error) {
 	response := buildMaskedTokenResponse(token)
 	row, err := model.GetTokenRouting(db, token.Id)
-	if err != nil {
+	if err != nil && !errors.Is(err, model.ErrRoutingPolicyNeedsUpdate) {
 		return nil, err
 	}
+	response.RoutingRequiresUpdate = errors.Is(err, model.ErrRoutingPolicyNeedsUpdate)
 	if row != nil {
 		response.RoutingVersion, response.AllowRoutingSelfWrite = row.Version, row.AllowSelfWrite
-		if row.Mode != "legacy" {
+		if row.Mode != "legacy" && !response.RoutingRequiresUpdate {
 			response.Routing = common.RawMessage(row.PolicyJSON)
 		}
 	}

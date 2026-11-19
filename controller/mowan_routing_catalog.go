@@ -66,6 +66,20 @@ func GetRoutingCandidates(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
+func GetRoutingModels(c *gin.Context) {
+	req, err := routingCatalogQuery(c)
+	if err != nil {
+		routingCatalogError(c, err)
+		return
+	}
+	items, err := service.RoutingCatalogModels(c.Request.Context(), req)
+	if err != nil {
+		routingCatalogError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"items": items})
+}
+
 func PreviewRouting(c *gin.Context) {
 	data, err := io.ReadAll(io.LimitReader(c.Request.Body, 2<<20+1))
 	if err != nil || len(data) > 2<<20 {

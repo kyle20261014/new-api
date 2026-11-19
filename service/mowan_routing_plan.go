@@ -37,24 +37,24 @@ type routingBinding struct {
 
 // RoutingPlan lives for the whole request, including group switches and policy reloads.
 type RoutingPlan struct {
-	mu             sync.Mutex
-	RequestID      string
-	Model          string
-	Version        int64
-	UserGroup      string
-	Reloads        int
-	Budget, Sent   int
-	Tried          map[int]bool
-	Keys           map[string]bool
-	Selected       routingBinding
-	FirstSelected  routingBinding
-	Binding        routingBinding
-	OriginGroup    string
-	Barrier        string
-	Deadline       time.Time
-	StartedAt      time.Time
-	TrySoftOffline bool
-	Probes         []model.RoutingProbeClaim
+	mu                   sync.Mutex
+	RequestID            string
+	Model                string
+	Version              int64
+	UserGroup            string
+	Reloads              int
+	Budget, Sent         int
+	Tried                map[int]bool
+	Keys                 map[string]bool
+	Selected             routingBinding
+	FirstSelected        routingBinding
+	Binding              routingBinding
+	OriginGroup          string
+	Barrier              string
+	Deadline             time.Time
+	StartedAt            time.Time
+	TrySoftOfflineGroups []string
+	Probes               []model.RoutingProbeClaim
 }
 
 func IsSmartRouting(c *gin.Context) bool {
@@ -180,7 +180,10 @@ func routingAuthority(c *gin.Context, name string, fn func(*gorm.DB, *model.Toke
 			return errors.New("routing_no_candidate")
 		}
 		if p := RoutingPlanFor(c); p != nil {
-			p.TrySoftOffline = policy.Strategy == "custom" && policy.Models[name].TrySoftOffline
+			p.TrySoftOfflineGroups = nil
+			if policy.Strategy == "custom" {
+				p.TrySoftOfflineGroups = policy.Models[name].TrySoftOfflineGroups
+			}
 		}
 		return fn(tx, row, groups, strategy)
 	})
@@ -669,7 +672,7 @@ func routingHealthTryable(c *gin.Context, p *RoutingPlan, ch *model.Channel, gro
 		if view.Health.State == model.RoutingHealthHalfOpen {
 			return false
 		}
-		if view.Health.State == model.RoutingHealthOpen && !view.ProbeReady && !p.TrySoftOffline {
+		if view.Health.State == model.RoutingHealthOpen && !view.ProbeReady && !slices.Contains(p.TrySoftOfflineGroups, group) {
 			return false
 		}
 	}
@@ -779,7 +782,7 @@ func claimRoutingProbes(c *gin.Context, p *RoutingPlan) error {
 		leaseID := fmt.Sprintf("%s:%d:%s", p.RequestID, p.Sent+1, stage)
 		var claim model.RoutingProbeClaim
 		var won bool
-		if p.TrySoftOffline {
+		if slices.Contains(p.TrySoftOfflineGroups, p.Selected.Group) {
 			claim, won, err = store.ClaimProbeExplicit(key, stage, leaseID, time.Time{})
 		} else {
 			claim, won, err = store.ClaimProbe(key, stage, leaseID, time.Time{})

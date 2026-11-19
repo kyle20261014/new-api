@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
@@ -50,13 +56,27 @@ function mount(
   available: RoutingCandidate[] | Error = candidates,
   keyConfiguration = false
 ) {
-  vi.spyOn(api, 'get').mockImplementation(async () => {
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (available instanceof Error) throw available
     return {
       data: {
         success: true,
         data: {
-          items: available,
+          items: url.endsWith('/models')
+            ? [
+                ...new Map(
+                  available.map((item) => [
+                    item.model,
+                    {
+                      ...item,
+                      group_count: available.filter(
+                        (other) => other.model === item.model
+                      ).length,
+                    },
+                  ])
+                ).values(),
+              ]
+            : available,
           total: available.length,
           page: 1,
           page_size: 100,
@@ -80,6 +100,60 @@ function mount(
   )
   return onSave
 }
+
+test('scheduling step shows its own title, reference strategy order and recommendation, and contextual group summaries', async () => {
+  mount({
+    ...empty,
+    models: {
+      'chat-model': {
+        groups: ['standard', 'priority'],
+        strategy: 'balanced',
+        try_soft_offline_groups: [],
+      },
+    },
+  })
+  const user = userEvent.setup()
+  expect(
+    screen.getByRole('dialog', { name: 'Custom model groups' })
+  ).toBeVisible()
+  await user.click(
+    await screen.findByRole('button', {
+      name: 'Next: Scheduling configuration',
+    })
+  )
+  expect(
+    screen.getByRole('dialog', { name: 'Scheduling configuration' })
+  ).toBeVisible()
+  const controls = within(
+    screen.getByRole('group', { name: 'Apply scheduling to all models' })
+  )
+  expect(
+    controls
+      .getAllByRole('button')
+      .map((button) => button.getAttribute('aria-label'))
+  ).toEqual([
+    'Balanced',
+    'Success first',
+    'Speed first',
+    'Price first',
+    'Manual order',
+  ])
+  expect(
+    within(controls.getByRole('button', { name: 'Balanced' })).getByText(
+      'Recommended'
+    )
+  ).toBeVisible()
+  expect(controls.getByRole('button', { name: 'Balanced' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  expect(screen.getByText('2 groups · Balanced')).toBeVisible()
+  await user.click(controls.getByRole('button', { name: 'Success first' }))
+  expect(
+    controls.getByRole('button', { name: 'Success first' })
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByText('2 groups · Success first')).toBeVisible()
+})
 
 test('only Key configuration asks users to save the Key after applying', async () => {
   mount(empty, candidates, true)
@@ -108,13 +182,14 @@ test('healthy selection survives filters, manual keyboard reorder preserves focu
     screen.getByRole('button', { name: 'Remove chat-model / standard' })
   ).toBeInTheDocument()
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
+    expect(
+      screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+    ).toBeEnabled()
   )
-  await user.click(screen.getByRole('button', { name: 'Next' }))
   await user.click(
-    screen.getByRole('combobox', { name: 'Scheduling for chat-model' })
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
   )
-  await user.click(await screen.findByRole('option', { name: 'Manual order' }))
+  await user.click(screen.getByRole('button', { name: 'Manual order' }))
   const handle = screen.getByRole('button', {
     name: 'Drag standard to reorder',
   })
@@ -126,7 +201,7 @@ test('healthy selection survives filters, manual keyboard reorder preserves focu
   ).toBeDisabled()
   await user.click(
     screen.getByRole('switch', {
-      name: /Try temporarily offline groups for chat-model$/,
+      name: 'Try chat-model / standard while temporarily offline',
     })
   )
   await user.click(
@@ -138,7 +213,7 @@ test('healthy selection survives filters, manual keyboard reorder preserves focu
       'chat-model': {
         groups: ['priority', 'standard'],
         strategy: 'manual',
-        try_soft_offline: true,
+        try_soft_offline_groups: ['standard'],
       },
     },
   })
@@ -152,7 +227,7 @@ test('removing the last saved group removes its model and disables continuation'
       'chat-model': {
         groups: ['standard'],
         strategy: 'balanced',
-        try_soft_offline: false,
+        try_soft_offline_groups: [],
       },
     },
   })
@@ -162,7 +237,9 @@ test('removing the last saved group removes its model and disables continuation'
   expect(
     screen.queryByRole('button', { name: 'Remove chat-model / standard' })
   ).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+  ).toBeDisabled()
 })
 
 test('a revoked saved group remains visible and must be removed before advancing', async () => {
@@ -172,7 +249,7 @@ test('a revoked saved group remains visible and must be removed before advancing
       'chat-model': {
         groups: ['revoked', 'standard'],
         strategy: 'manual',
-        try_soft_offline: false,
+        try_soft_offline_groups: [],
       },
     },
   })
@@ -180,7 +257,9 @@ test('a revoked saved group remains visible and must be removed before advancing
   expect(
     screen.getByRole('button', { name: 'Remove chat-model / revoked' })
   ).toHaveTextContent('Unavailable')
-  expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+  ).toBeDisabled()
 })
 
 test('candidate loading failure exposes retry and keeps the draft unsaved', async () => {
@@ -225,7 +304,7 @@ test('custom health-empty clears every filter without losing selected groups', a
       'chat-model': {
         groups: ['standard'],
         strategy: 'balanced',
-        try_soft_offline: false,
+        try_soft_offline_groups: [],
       },
     },
   })
@@ -239,7 +318,7 @@ test('custom health-empty clears every filter without losing selected groups', a
       name: 'Select chat-model / standard',
     })
   ).toBeChecked()
-  expect(screen.getByRole('button', { name: 'All models' })).toHaveAttribute(
+  expect(screen.getByRole('button', { name: 'chat-model' })).toHaveAttribute(
     'aria-pressed',
     'true'
   )
@@ -253,12 +332,26 @@ test('custom true-empty explains authorization and reloads when candidates becom
   expect(
     await screen.findByText(/No groups are available for this account or Key/)
   ).toBeVisible()
-  vi.mocked(api.get).mockResolvedValue({
+  vi.mocked(api.get).mockImplementation(async (url) => ({
     data: {
       success: true,
-      data: { items: candidates, total: 3, page: 1, page_size: 100 },
+      data: {
+        items: url.endsWith('/models')
+          ? [
+              {
+                model: 'chat-model',
+                display_name: 'Chat',
+                category: 'text',
+                group_count: 3,
+              },
+            ]
+          : candidates,
+        total: 3,
+        page: 1,
+        page_size: 100,
+      },
     },
-  })
+  }))
   await userEvent
     .setup()
     .click(screen.getByRole('button', { name: 'Reload candidates' }))
@@ -272,40 +365,123 @@ test('current model scheduling explanation stays visible and follows individual,
       'chat-model': {
         groups: ['standard', 'priority'],
         strategy: 'balanced',
-        try_soft_offline: false,
+        try_soft_offline_groups: [],
       },
     },
   })
   const user = userEvent.setup()
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
+    expect(
+      screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+    ).toBeEnabled()
   )
-  await user.click(screen.getByRole('button', { name: 'Next' }))
-  expect(
-    screen.getByText(
-      'Automatically chooses among this model’s selected groups using the chosen strategy.'
-    )
-  ).toBeVisible()
+  await user.click(
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+  )
   expect(
     screen.getByText(/Balances price, speed and reliability/)
   ).toBeVisible()
-  await user.click(
-    screen.getByRole('combobox', { name: 'Scheduling for chat-model' })
-  )
-  await user.click(await screen.findByRole('option', { name: 'Price first' }))
+  await user.click(screen.getByRole('button', { name: 'Price first' }))
   expect(
     screen.getByText(/Prefers lower-priced groups/, { selector: 'p' })
   ).toBeVisible()
-  await user.click(
-    screen.getByRole('combobox', { name: 'Apply scheduling to all models' })
-  )
-  await user.click(await screen.findByRole('option', { name: 'Manual order' }))
+  await user.click(screen.getByRole('button', { name: 'Manual order' }))
   expect(
     screen.getByText(
       'Tries groups from top to bottom, skipping unavailable ones. Drag or use the up and down buttons to reorder.'
     )
   ).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Previous step' }))
-  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await user.click(
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+  )
   expect(screen.getByText(/Tries groups from top to bottom/)).toBeVisible()
+})
+
+test('complete model navigation, one strategy and independent group preferences survive back and removal', async () => {
+  const initial: CustomRouting = {
+    ...empty,
+    models: {
+      'chat-model': {
+        groups: ['standard', 'priority'],
+        strategy: 'balanced',
+        try_soft_offline_groups: [],
+      },
+      'other-model': {
+        groups: ['standard'],
+        strategy: 'balanced',
+        try_soft_offline_groups: [],
+      },
+    },
+  }
+  const snapshot = JSON.stringify(initial)
+  const onSave = mount(initial, [
+    ...candidates,
+    { ...candidates[0], model: 'other-model', display_name: 'Other model' },
+  ])
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'other-model' }))
+  expect(screen.getByRole('button', { name: 'chat-model' })).toBeVisible()
+  await user.click(
+    screen.getByRole('switch', {
+      name: 'Try chat-model / priority while temporarily offline',
+    })
+  )
+  expect(
+    screen.getByRole('switch', {
+      name: 'Try chat-model / standard while temporarily offline',
+    })
+  ).not.toBeChecked()
+  expect(
+    screen.getByRole('switch', {
+      name: 'Try other-model / standard while temporarily offline',
+    })
+  ).not.toBeChecked()
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+    ).toBeEnabled()
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+  )
+  expect(
+    screen.queryByRole('combobox', { name: /Scheduling for/ })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Speed first' }))
+  await user.click(screen.getByRole('button', { name: 'Previous step' }))
+  expect(
+    screen.getByRole('switch', {
+      name: 'Try chat-model / priority while temporarily offline',
+    })
+  ).toBeChecked()
+  await user.click(
+    screen.getByRole('button', { name: 'Remove chat-model / priority' })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+  )
+  expect(screen.getByRole('button', { name: 'Speed first' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Use this configuration' })
+  )
+  expect(onSave).toHaveBeenCalledWith({
+    ...initial,
+    models: {
+      'chat-model': {
+        groups: ['standard'],
+        strategy: 'speed',
+        try_soft_offline_groups: [],
+      },
+      'other-model': {
+        groups: ['standard'],
+        strategy: 'speed',
+        try_soft_offline_groups: [],
+      },
+    },
+  })
+  expect(JSON.stringify(initial)).toBe(snapshot)
 })

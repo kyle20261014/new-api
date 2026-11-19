@@ -93,7 +93,7 @@ export function RoutingHelp() {
             </p>
             <p>
               {t(
-                'Speed and success rate use call records from the last 24 hours. If records are too few or too old, price is used first.'
+                'Speed uses successful calls from the last hour; success rate uses call records from the last 24 hours. If records are too few or too old, price is used first.'
               )}
             </p>
             <p>

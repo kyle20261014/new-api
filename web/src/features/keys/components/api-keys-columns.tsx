@@ -158,6 +158,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
             <ApiKeyGroupCell
               group={group}
               routing={apiKey.routing}
+              routingRequiresUpdate={apiKey.routing_requires_update}
               ratio={groupRatios[group]}
               crossGroupRetry={apiKey.cross_group_retry}
               shouldReduceMotion={shouldReduceMotion}

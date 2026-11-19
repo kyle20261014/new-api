@@ -61,7 +61,7 @@ test('visitors can read shared help without querying private candidates or price
   })
   expect(
     within(help).getByText(
-      /Speed and success rate use call records from the last 24 hours/
+      /Speed uses successful calls from the last hour; success rate uses call records from the last 24 hours/
     )
   ).toBeInTheDocument()
   expect(

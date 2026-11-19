@@ -8,10 +8,24 @@ import type {
   CandidatePage,
   ModelCategory,
   RoutingCandidate,
+  RoutingModel,
   RoutingPolicy,
   RoutingPreview,
   RoutingSubmission,
 } from './types'
+
+export async function getRoutingModels(
+  tokenId?: number,
+  signal?: AbortSignal
+): Promise<RoutingModel[]> {
+  const response = await api.get<ApiResponse<{ items: RoutingModel[] }>>(
+    '/api/mowan/smart-routing/models',
+    { params: { token_id: tokenId }, signal, disableDuplicate: true }
+  )
+  const body = requireServerSuccess(response.data)
+  if (!body.data) throw new Error(t('Failed to load'))
+  return body.data.items
+}
 
 export async function getRoutingCandidates(
   params: {

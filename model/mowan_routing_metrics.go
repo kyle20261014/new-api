@@ -705,7 +705,7 @@ func (s RoutingMetricsStore) ClaimProbe(k RoutingMetricKey, stage RoutingMetricS
 }
 
 // ClaimProbeExplicit is only for a custom model's already-authorized
-// try_soft_offline request. It skips cooldown, never another owner's live lease.
+// selected group's try_soft_offline_groups preference. It skips cooldown, never another owner's live lease.
 func (s RoutingMetricsStore) ClaimProbeExplicit(k RoutingMetricKey, stage RoutingMetricStage, leaseID string, now time.Time) (RoutingProbeClaim, bool, error) {
 	return s.claimProbe(k, stage, leaseID, true, now)
 }
