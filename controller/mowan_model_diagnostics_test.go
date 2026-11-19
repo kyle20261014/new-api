@@ -150,3 +150,17 @@ func TestDiagnosticChatRequestUsesRelativeUpstreamPath(t *testing.T) {
 	require.Equal(t, "https://antrouter.ai/v1/chat/completions", relaycommon.GetFullRequestURL("https://antrouter.ai", request.URL.String(), constant.ChannelTypeOpenAI))
 	require.NotContains(t, request.URL.String(), "diagnostics.internal")
 }
+
+func TestDiagnosticResponseSupportsGinFlush(t *testing.T) {
+	response := &diagnosticResponse{header: http.Header{}}
+	require.Implements(t, (*http.Flusher)(nil), response)
+	engine := gin.New()
+	engine.GET("/", func(c *gin.Context) {
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.WriteString("ok")
+		c.Writer.Flush()
+	})
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, http.StatusOK, response.status)
+	require.Equal(t, "ok", response.body.String())
+}
