@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, Brain, Brush, FileText, Fingerprint } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -311,7 +311,7 @@ function DiagnosticWorkspace(props: {
           )}
           {!catalog.data?.chat_supported && (
             <p className='text-muted-foreground text-sm'>
-              {t('Chat diagnostics require a configured chat endpoint.')}
+              {t('Only text models support diagnostics.')}
             </p>
           )}
           {catalog.data?.chat_supported && (!current || kind !== 'drawing') && (
@@ -394,7 +394,10 @@ function TechnicalReports(props: {
   )
 }
 
-export function ModelDiagnostics(props: { model: string }) {
+export function ModelDiagnostics(props: {
+  model: string
+  trigger?: ReactElement
+}) {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const [open, setOpen] = useState(false)
@@ -411,10 +414,12 @@ export function ModelDiagnostics(props: { model: string }) {
       description={props.model}
       descriptionClassName='break-all'
       trigger={
-        <Button variant='outline' className='min-h-11'>
-          <Activity className='size-4' />
-          {t('Model diagnostics')}
-        </Button>
+        props.trigger ?? (
+          <Button variant='outline' className='min-h-11'>
+            <Activity className='size-4' />
+            {t('Model diagnostics')}
+          </Button>
+        )
       }
       contentClassName='sm:max-w-6xl'
       contentHeight='min(76dvh, 850px)'

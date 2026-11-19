@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
+import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -149,13 +150,40 @@ test('non-chat models show applicability without a start control', async () => {
   mount()
   await user.click(screen.getByRole('button', { name: 'Model diagnostics' }))
   expect(
-    await screen.findByText(
-      'Chat diagnostics require a configured chat endpoint.'
-    )
+    await screen.findByText('Only text models support diagnostics.')
   ).toBeVisible()
   expect(
     screen.queryByRole('button', { name: 'Start test' })
   ).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+})
+
+test('a custom trigger replaces only the default entry and opens the same workspace', async () => {
+  serve()
+  const post = vi.spyOn(api, 'post')
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={client}>
+      <ModelDiagnostics
+        model='chat-model'
+        trigger={
+          <Button variant='outline' size='sm'>
+            Open diagnostics
+          </Button>
+        }
+      />
+    </QueryClientProvider>
+  )
+  expect(
+    screen.queryByRole('button', { name: 'Model diagnostics' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Open diagnostics' }))
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Model diagnostics',
+  })
+  expect(
+    await within(dialog).findByRole('button', { name: 'premium' })
+  ).toBeVisible()
   expect(post).not.toHaveBeenCalled()
 })
 

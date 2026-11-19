@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Row, PaginationState } from '@tanstack/react-table'
+import type { ColumnDef, Row, PaginationState } from '@tanstack/react-table'
+import { Activity } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -26,8 +27,11 @@ import {
   DataTableView,
   useDataTable,
 } from '@/components/data-table'
+import { Button } from '@/components/ui/button'
+import { ModelDiagnostics } from '@/features/mowan/model-diagnostics'
 
 import { DEFAULT_PRICING_PAGE_SIZE, DEFAULT_TOKEN_UNIT } from '../constants'
+import { filterByCategory } from '../lib/filters'
 import type { PricingModel, TokenUnit } from '../types'
 import { usePricingColumns } from './pricing-columns'
 
@@ -60,13 +64,44 @@ export function PricingTable(props: PricingTableProps) {
     pageSize: DEFAULT_PRICING_PAGE_SIZE,
   })
 
-  const columns = usePricingColumns({
+  const priceColumns = usePricingColumns({
     tokenUnit,
     priceRate,
     usdExchangeRate,
     showRechargePrice,
     selectedGroup,
   })
+  const columns: ColumnDef<PricingModel>[] = [
+    ...priceColumns,
+    {
+      id: 'diagnostics',
+      header: () => null,
+      cell: ({ row }) => {
+        if (filterByCategory([row.original], 'text').length === 0) {
+          return null
+        }
+        return (
+          <div onClick={(event) => event.stopPropagation()}>
+            <ModelDiagnostics
+              model={row.original.model_name}
+              trigger={
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='size-8 p-0'
+                  aria-label={t('Model diagnostics')}
+                >
+                  <Activity aria-hidden className='size-4' />
+                </Button>
+              }
+            />
+          </div>
+        )
+      },
+      size: 64,
+      enableSorting: false,
+    },
+  ]
 
   const { table } = useDataTable({
     data: models,

@@ -571,3 +571,24 @@ func TestRoutingOperationMidjourneyRegisteredCreates(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestDiagnosticChatCapableFollowsCatalogCategory(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		entry model.Pricing
+		want  bool
+	}{
+		{"text tag without a declared endpoint", model.Pricing{ModelName: "text-tagged", Tags: "text"}, true},
+		{"localized text tag without a declared endpoint", model.Pricing{ModelName: "localized-text", Tags: "文本模型"}, true},
+		{"image tag stays unavailable despite a chat endpoint", model.Pricing{ModelName: "image-tagged", Tags: "image", SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI}}, false},
+		{"video tag stays unavailable", model.Pricing{ModelName: "video-tagged", Tags: "video"}, false},
+		{"audio tag stays unavailable", model.Pricing{ModelName: "audio-tagged", Tags: "audio"}, false},
+		{"untagged chat endpoint infers text", model.Pricing{ModelName: "endpoint-inferred", SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI}}, true},
+		{"untagged image endpoint is not chat capable", model.Pricing{ModelName: "image-endpoint", SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeImageGeneration}}, false},
+		{"untagged audio name is not chat capable", model.Pricing{ModelName: "speech-tts"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, diagnosticChatCapable(tc.entry))
+		})
+	}
+}
