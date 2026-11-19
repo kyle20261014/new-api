@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"net/http/httptest"
@@ -13,13 +14,103 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/internal/mowan/smartrouting"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRoutingModelIndexCompleteAuthorizedAndWithoutQuotes(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Model{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "index-owner", AffCode: "index-owner", Group: "default", Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.User{Id: 2, Username: "index-other", AffCode: "index-other", Group: "default", Status: common.UserStatusEnabled}).Error)
+	names := []string{}
+	for i := range 120 {
+		names = append(names, fmt.Sprintf("index-%03d", i))
+	}
+	createChannelSelectAutoGroupsChannel(t, db, 7901, "all", strings.Join(names, ","))
+	require.NoError(t, db.Where("channel_id = ?", 7901).Delete(&model.Ability{}).Error)
+	for _, name := range names {
+		require.NoError(t, db.Create(&model.Ability{ChannelId: 7901, Group: "all", Model: name, Enabled: true}).Error)
+	}
+	createChannelSelectAutoGroupsChannel(t, db, 7902, "revoked", "not-authorized")
+	createChannelSelectAutoGroupsChannel(t, db, 7903, "default", "disabled-channel")
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 7903).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: names[0], Icon: "OpenAI", Status: 1}).Error)
+	require.NoError(t, db.Create(&model.Token{Id: 1, UserId: 1, Key: "index-key", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true, ModelLimitsEnabled: true, ModelLimits: names[0] + "," + names[119]}).Error)
+	// No pricing options or metrics tables: navigation must not quote or fold every model.
+	items, err := RoutingCatalogModels(context.Background(), CatalogRequest{UserID: 1, Page: 2, PageSize: 1, Model: names[1], Search: "missing", Category: "video"})
+	require.NoError(t, err)
+	require.Len(t, items, 120)
+	require.Equal(t, "OpenAI", items[0].Icon)
+	require.Equal(t, 2, items[119].GroupCount)
+	items, err = RoutingCatalogModels(context.Background(), CatalogRequest{UserID: 1, TokenID: 1})
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	require.Equal(t, names[119], items[1].Model)
+	encoded, err := common.Marshal(items)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "index-key")
+	require.NotContains(t, string(encoded), "channel")
+	_, err = RoutingCatalogModels(context.Background(), CatalogRequest{UserID: 2, TokenID: 1})
+	require.ErrorContains(t, err, "routing_token_owner_mismatch")
+}
+
+func TestRoutingModelIndexUsesAdvancedCustomEndpoints(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Model{}, &model.Vendor{}, &model.Option{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "index-image", AffCode: "index-image", Group: "default", Status: common.UserStatusEnabled}).Error)
+	channel := &model.Channel{Id: 7904, Type: constant.ChannelTypeAdvancedCustom, Status: common.ChannelStatusEnabled, Models: "acme-v1", Group: "default"}
+	channel.SetOtherSettings(dto.ChannelOtherSettings{AdvancedCustom: &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{IncomingPath: "/v1/images/generations", UpstreamPath: "/v1/images/generations"}}}})
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{ChannelId: 7904, Group: "default", Model: "acme-v1", Enabled: true}).Error)
+	items, err := RoutingCatalogModels(context.Background(), CatalogRequest{UserID: 1})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, "image", items[0].Category)
+	model.InitChannelCache()
+	model.InvalidatePricingCache()
+	t.Cleanup(model.InvalidatePricingCache)
+	candidates, err := RoutingCatalog(context.Background(), CatalogRequest{UserID: 1, Model: "acme-v1", Page: 1, PageSize: 100})
+	require.NoError(t, err)
+	require.Len(t, candidates.Items, 1)
+	require.Equal(t, candidates.Items[0].Category, items[0].Category)
+}
+
+func TestRoutingCatalogEffectivePluginOverrideMappingAndUsageProfile(t *testing.T) {
+	registry := jsplugin.NewRegistry()
+	_, err := registry.Register(`export const meta={apiVersion:1,key:"catalog-test",name:"test",version:"1.0.0",author:{name:"test"},models:["catalog-video"],fetchMode:"per_task",usageSchema:{image_count:{type:"number",unit:"count"}},usageProfiles:[{models:["catalog-video"],schema:{seconds:{type:"number",unit:"second"}}}],routes:[{method:"POST",path:"/catalog-test/submit",action:"create",type:"submit",decode:"decodeJob",render:"jobCreated"}]}; export const native={decodeJob:function(ctx){return ctx},jobCreated:function(ctx,task){return task}};export function buildSubmitRequest(){return {}};export function parseSubmitResponse(){return {}};export function buildQueryRequest(){return {}};export function parseTaskResult(){return {}};`, jsplugin.Options{})
+	require.NoError(t, err)
+	mapping := `{"catalog-video":"middle","middle":"ep-vendor"}`
+	settingJSON := `{"task_plugin_key":"catalog-test"}`
+	ch := &model.Channel{Id: 1, Type: constant.ChannelTypeTaskPlugin, ModelMapping: &mapping, Setting: &settingJSON}
+	variants := catalogChannelVariants(CatalogRequest{}, "catalog-video", "vip", ch, model.Pricing{}, registry.Generation())
+	require.NotEmpty(t, variants)
+	v := variants[0]
+	require.Equal(t, "ep-vendor", v.BillingModel)
+	require.Contains(t, v.UsageSchema, "seconds")
+	require.NotContains(t, v.UsageSchema, "image_count")
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	t.Cleanup(func() { *settings = saved })
+	settings.BillingMode = map[string]string{"catalog-video": "tiered_expr"}
+	settings.BillingExpr = map[string]string{"catalog-video": `tier("public",u("seconds")*99)`}
+	settings.PluginBillingExpr = map[string]string{"catalog-test::ep-vendor": `tier("actual",u("seconds")*3)`}
+	q := catalogQuote(model.ModelPricingEntry{}, v, 0, CatalogRequest{})
+	require.Equal(t, "available", q.Comparison)
+	require.Equal(t, settings.PluginBillingExpr["catalog-test::ep-vendor"], q.Expression.Rule)
+	require.Zero(t, q.Expression.GroupRatio)
+	require.Equal(t, v.UsageSchema, q.Expression.UsageSchema)
+	settings.PluginBillingExpr["catalog-test::catalog-video"] = `tier("wrong-contract",u("image_count")*2)`
+	q = catalogQuote(model.ModelPricingEntry{}, v, 1, CatalogRequest{})
+	require.Equal(t, "provider_usage_incompatible", q.Reason)
+	require.Contains(t, q.Expression.Rule, "image_count", "an incompatible override must never borrow the public or mapped expression")
+}
 
 func TestRoutingCatalogEffectiveRatioAndZero(t *testing.T) {
 	original := ratio_setting.GroupGroupRatio2JSONString()
@@ -343,6 +434,46 @@ func TestRoutingCatalogMetricFailureKeepsUnknown(t *testing.T) {
 	require.Nil(t, variant.UpdatedAt)
 	require.Len(t, variant.Observation, 1)
 	require.False(t, variant.Observation[0].ActiveKnown)
+}
+
+func TestRoutingSpeedUsesOneHourInsteadOfDayAndRequiresRecentSamples(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	require.NoError(t, model.MigrateRoutingMetrics(db))
+	now := time.Now().Truncate(time.Second)
+	store := model.RoutingMetricsStore{DB: db}
+	variants := make([]CatalogVariant, 3)
+	for i, group := range []string{"old-fast", "recent-fast", "recent-insufficient"} {
+		key := model.RoutingMetricKey{ClientModel: "gpt-4o", BusinessGroup: group, ProtocolClass: "sync", ProviderKey: "builtin:1:v1", OperationKey: "chat"}
+		oldMS, recentMS, recentCount := float64(10), float64(900), int64(5)
+		if i == 1 {
+			oldMS, recentMS = 9000, 20
+		}
+		if i == 2 {
+			recentCount = 4
+		}
+		for _, sample := range []struct {
+			at    time.Time
+			count int64
+			ms    float64
+		}{{now.Add(-2 * time.Hour), 100, oldMS}, {now, recentCount, recentMS}} {
+			_, err := store.UpsertSnapshot(model.RoutingMetricBucket{RoutingMetricKey: key, Stage: model.RoutingStageAttempt, NodeBootID: "hour-test", ChannelID: 1, Minute: sample.at.Unix() / 60 * 60, Revision: 1, Eligible: sample.count, Success: sample.count, SpeedSamples: sample.count, SpeedTotalMS: float64(sample.count) * sample.ms, LastObservationAt: sample.at.Unix()}, now)
+			require.NoError(t, err)
+		}
+		variants[i] = CatalogVariant{Key: key, ChannelIDs: []int{1}, CatalogMetrics: catalogUnknownMetrics("sync")}
+		catalogFoldVariant(db, &variants[i], now)
+	}
+	candidates := []smartrouting.RankCandidate{}
+	for _, v := range variants {
+		candidates = append(candidates, smartrouting.RankCandidate{Group: v.Key.BusinessGroup, Comparable: true, Cost: 1, Observations: v.Observation})
+	}
+	ranked, err := smartrouting.Rank(smartrouting.RankRequest{Strategy: "speed", ClientModel: "gpt-4o", Now: now, Candidates: candidates})
+	require.NoError(t, err)
+	require.Equal(t, "recent-fast", ranked.Candidates[0].Group)
+	require.False(t, ranked.Candidates[2].SpeedTrusted)
+	require.EqualValues(t, 105, variants[0].Samples24h)
+	ranked, err = smartrouting.Rank(smartrouting.RankRequest{Strategy: "speed", ClientModel: "gpt-4o", Now: now, Candidates: candidates[2:]})
+	require.NoError(t, err)
+	require.Equal(t, "insufficient_samples", ranked.FallbackReason)
 }
 
 func TestRoutingCatalogOperationAndPreviewValidation(t *testing.T) {

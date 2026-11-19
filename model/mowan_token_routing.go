@@ -14,6 +14,7 @@ import (
 var (
 	ErrRoutingVersionConflict   = errors.New("routing_version_conflict")
 	ErrRoutingSelfWriteDisabled = errors.New("routing_self_write_disabled")
+	ErrRoutingPolicyNeedsUpdate = errors.New("invalid stored routing policy")
 )
 
 type TokenRouting struct {
@@ -50,10 +51,19 @@ func GetTokenRouting(db *gorm.DB, tokenID int) (*TokenRouting, error) {
 	if row.SchemaVersion != 1 || row.Version < 1 || (row.Mode != "legacy" && row.Mode != "fixed" && row.Mode != "smart") {
 		return nil, errors.New("invalid stored routing configuration")
 	}
+	if row.LegacySnapshot != "" {
+		if _, err := parseLegacyRouting(row.LegacySnapshot); err != nil {
+			return nil, err
+		}
+	}
 	if row.Mode != "legacy" {
 		p, err := smartrouting.ParsePolicy([]byte(row.PolicyJSON))
 		if err != nil || p.Mode != row.Mode {
-			return nil, errors.New("invalid stored routing policy")
+			if p.SchemaVersion != row.SchemaVersion || p.Mode != row.Mode {
+				return nil, errors.New("invalid stored routing policy")
+			}
+			// Keep the version available for explicit console replacement; callers must still reject the error for execution.
+			return &row, ErrRoutingPolicyNeedsUpdate
 		}
 		if p.Mode == "fixed" && p.FixedGroup != nil && *p.FixedGroup == "" {
 			original, err := parseLegacyRouting(row.LegacySnapshot)
@@ -63,11 +73,6 @@ func GetTokenRouting(db *gorm.DB, tokenID int) (*TokenRouting, error) {
 		}
 	} else if row.PolicyJSON != "" {
 		return nil, errors.New("invalid stored legacy routing policy")
-	}
-	if row.LegacySnapshot != "" {
-		if _, err := parseLegacyRouting(row.LegacySnapshot); err != nil {
-			return nil, err
-		}
 	}
 	return &row, nil
 }
@@ -101,7 +106,7 @@ func SaveTokenRoutingTx(tx *gorm.DB, token *Token, policy *smartrouting.Policy, 
 		return nil, err
 	}
 	row, err := GetTokenRouting(tx, token.Id)
-	if err != nil {
+	if err != nil && !(errors.Is(err, ErrRoutingPolicyNeedsUpdate) && !self && (policy != nil || restoreLegacy)) {
 		return nil, err
 	}
 	current := int64(0)

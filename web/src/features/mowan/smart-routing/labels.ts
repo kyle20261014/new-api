@@ -7,6 +7,9 @@ export function routingReasonLabel(reason: string, t: TFunction): string {
     channel_pricing_ambiguous: t('Prices cannot be compared yet.'),
     group_ratio_invalid: unavailable,
     provider_price_unavailable: unavailable,
+    provider_usage_incompatible: t(
+      'This provider cannot supply all usage fields required by the pricing rule.'
+    ),
     billing_expression_invalid: unavailable,
     price_invalid: unavailable,
     variant_unresolved: unavailable,

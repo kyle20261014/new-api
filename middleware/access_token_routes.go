@@ -229,6 +229,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/token/batch":                                   accessTokenScopeRule("api_key:write"),
 	"POST /api/token/batch/keys":                              accessTokenScopeRule("api_key:reveal"),
 	"GET /api/mowan/smart-routing/candidates":                 accessTokenScopeRule("api_key:read"),
+	"GET /api/mowan/smart-routing/models":                     accessTokenScopeRule("api_key:read"),
 	"POST /api/mowan/smart-routing/preview":                   accessTokenScopeRule("api_key:read"),
 	"GET /api/mowan/smart-routing/submissions/:submission_id": accessTokenScopeRule("usage:read"),
 

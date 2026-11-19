@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 import { CandidateCard } from '../candidate-card'
 import { getSubmissionReference } from '../submission-reference'
@@ -13,6 +13,167 @@ const i18n = createInstance()
 await i18n
   .use(initReactI18next)
   .init({ lng: 'en', resources: { en: { translation: {} } } })
+
+test.each([
+  [
+    true,
+    'tier("base", u("seconds") * 3 * (hour("UTC") >= 0 ? 2 : 1)) * (day("UTC") >= 1 ? 3 : 1)',
+  ] as const,
+  [
+    true,
+    '(tier("base", u("seconds") * 3)) * ((hour("UTC") >= 0 ? 2 : 1) > 1 ? 3 : 1)',
+  ] as const,
+  ...[true, false].flatMap((task) =>
+    ['+2', '-0'].flatMap((multiplier) =>
+      [false, true].map(
+        (mixed) =>
+          [
+            task,
+            `tier("base", ${task ? 'u("seconds")' : 'p'} * 3) * (hour("UTC") >= 0 ? ${multiplier} : 1)${mixed ? ' * (day("UTC") >= 1 ? 3 : 1)' : ''}`,
+          ] as const
+      )
+    )
+  ),
+])(
+  'complex or incomplete pricing retains its entire rule in the card and clipboard (task=%s): %s',
+  async (task, rule) => {
+    const user = userEvent.setup()
+    const clipboard = vi
+      .spyOn(navigator.clipboard, 'writeText')
+      .mockResolvedValue()
+    const candidate: RoutingCandidate = {
+      model: 'task',
+      display_name: 'task',
+      category: 'video',
+      group: 'standard',
+      available: true,
+      health: 'normal',
+      quote: {
+        comparison: 'available',
+        currency: 'USD',
+        prices: [],
+        expression: {
+          rule,
+          task,
+          group_ratio: 1,
+          usage_schema: {
+            seconds: {
+              type: 'number',
+              unit: 'second',
+              description: 'Duration',
+            },
+          },
+        },
+      },
+      metrics: {
+        protocol_class: 'task_async',
+        response_kind: 'task_terminal',
+        response_ms_1h: null,
+        response_samples_1h: 0,
+        success_24h: null,
+        samples_24h: 0,
+        updated_at: null,
+        stale: true,
+      },
+    }
+    render(
+      <I18nextProvider i18n={i18n}>
+        <CandidateCard candidate={candidate} />
+      </I18nextProvider>
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Copy effective prices' })
+    )
+    const copied = clipboard.mock.calls[0][0]
+    expect(copied).toContain('Special pricing')
+    expect(copied).toContain(rule)
+    expect(copied).not.toContain('Base price')
+    expect(copied).not.toContain('Otherwise ×1')
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.getByText('Special pricing')).toBeVisible()
+  }
+)
+
+test.each([false, true])(
+  'price table and copied quote preserve request conditions or unavailable-provider meaning (incompatible=%s)',
+  async (incompatible) => {
+    const user = userEvent.setup()
+    const clipboard = vi
+      .spyOn(navigator.clipboard, 'writeText')
+      .mockResolvedValue()
+    const rule = incompatible
+      ? 'tier("seconds", u("seconds") * 3 + u("images") * 10)'
+      : '(tier("seconds", u("seconds") * 3)) * (hour("UTC") >= 0 ? 2 : 1)'
+    const reason =
+      'This provider cannot supply all usage fields required by the pricing rule.'
+    const candidate: RoutingCandidate = {
+      model: 'fixture/task',
+      display_name: 'fixture/task',
+      category: 'video',
+      group: 'standard',
+      available: true,
+      health: 'normal',
+      quote: {
+        comparison: 'unavailable',
+        reason: incompatible
+          ? 'provider_usage_incompatible'
+          : 'request_usage_unknown',
+        currency: 'USD',
+        prices: [],
+        expression: {
+          rule,
+          task: true,
+          group_ratio: 1,
+          usage_schema: {
+            seconds: {
+              type: 'number',
+              unit: 'second',
+              description: 'Duration',
+            },
+          },
+        },
+      },
+      metrics: {
+        protocol_class: 'task_async',
+        response_kind: 'task_terminal',
+        response_ms_1h: null,
+        response_samples_1h: 0,
+        success_24h: null,
+        samples_24h: 0,
+        updated_at: null,
+        stale: true,
+      },
+    }
+    render(
+      <I18nextProvider i18n={i18n}>
+        <CandidateCard candidate={candidate} />
+      </I18nextProvider>
+    )
+    if (incompatible) {
+      expect(screen.queryByRole('table')).not.toBeInTheDocument()
+      expect(screen.getByText(reason)).toBeVisible()
+    } else {
+      expect(
+        screen.getByRole('row', { name: 'Base price · Duration $3 / s' })
+      ).toBeVisible()
+      expect(screen.getByRole('table')).toHaveTextContent('Otherwise ×1')
+      expect(screen.getByRole('table')).toHaveTextContent('UTC')
+    }
+    await user.click(
+      screen.getByRole('button', { name: 'Copy effective prices' })
+    )
+    const copied = clipboard.mock.calls[0][0]
+    if (incompatible) {
+      expect(copied).toContain(reason)
+      expect(copied).toContain(rule)
+      expect(copied).not.toContain('Duration: $3')
+    } else {
+      expect(copied).toContain('Base price · Duration: $3 / s')
+      expect(copied).toContain('UTC')
+      expect(copied).toContain('×2 · Otherwise ×1')
+    }
+  }
+)
 
 test.each([
   ['channel_pricing_ambiguous', 'Prices cannot be compared yet.'],
@@ -114,21 +275,21 @@ test('unknown metrics remain unknown while actual zero prices and bounded prices
     </I18nextProvider>
   )
   expect(
-    screen.getByRole('row', { name: 'Free input: $0.00 / token' })
+    screen.getByRole('row', { name: 'Free input $0.00 / token' })
   ).toBeInTheDocument()
   expect(
     screen.getByRole('row', {
-      name: 'Output: $0.10 – $0.80 / image · resolution',
+      name: 'Output $0.10 – $0.80 / image · resolution',
     })
   ).toBeInTheDocument()
   expect(
-    screen.getByRole('row', { name: 'Audio: Unknown / second' })
+    screen.getByRole('row', { name: 'Audio Unknown / second' })
   ).toBeInTheDocument()
   expect(
-    screen.getByRole('row', { name: 'Request pricing rule: 1.25 / Multiplier' })
+    screen.getByRole('row', { name: 'Request pricing rule 1.25 / Multiplier' })
   ).toBeInTheDocument()
   expect(
-    screen.getByRole('row', { name: 'Input tokens: $0.005 / 1M token' })
+    screen.getByRole('row', { name: 'Input tokens $0.005 / 1M token' })
   ).toBeInTheDocument()
   expect(
     screen.getByText(
@@ -136,10 +297,10 @@ test('unknown metrics remain unknown while actual zero prices and bounded prices
     )
   ).toBeInTheDocument()
   expect(
-    screen.getByText('Task completion time · Last hour')
+    screen.getByText('Task completion time · Last hour:')
   ).toBeInTheDocument()
   expect(
-    screen.getByText('Call success rate · Last 24 hours')
+    screen.getByText('Call success rate · Last 24 hours:')
   ).toBeInTheDocument()
   expect(screen.getAllByText('Unknown · Calls counted: 0')).toHaveLength(2)
 })

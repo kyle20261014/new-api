@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
-import { getRoutingCandidates } from './api'
+import { getRoutingCandidates, getRoutingModels } from './api'
 import { CandidateCard } from './candidate-card'
 import { CandidateFilters, CandidatePagination } from './candidate-filters'
 import { routingIsValid } from './policy'
@@ -30,6 +30,11 @@ export function DynamicExclusionsDialog(props: {
   const [category, setCategory] = useState<ModelCategory>('all')
   const [model, setModel] = useState('')
   const [page, setPage] = useState(1)
+  const modelQuery = useQuery({
+    queryKey: ['routing-models', props.tokenId],
+    queryFn: ({ signal }) => getRoutingModels(props.tokenId, signal),
+    staleTime: 30_000,
+  })
   const query = useQuery({
     queryKey: [
       'routing-exclusions',
@@ -55,9 +60,14 @@ export function DynamicExclusionsDialog(props: {
   const items = query.data?.items ?? []
   const number = (value: number) =>
     formatNumber(value, toIntlLocale(i18n.resolvedLanguage || i18n.language))
-  const models = [
-    ...new Set([model, ...items.map((item) => item.model)]),
-  ].filter(Boolean)
+  const models = (modelQuery.data ?? []).filter(
+    (item) =>
+      (category === 'all' || item.category === category) &&
+      (!search ||
+        `${item.model} ${item.display_name}`
+          .toLowerCase()
+          .includes(search.trim().toLowerCase()))
+  )
   const groups = [
     ...new Set([...(props.groups ?? []), ...items.map((item) => item.group)]),
   ].filter((name) => name !== 'auto' && name !== 'all')
@@ -125,9 +135,11 @@ export function DynamicExclusionsDialog(props: {
       description={t(
         'Exclude models or groups you do not want to use. Available items that are not excluded join automatically.'
       )}
-      contentClassName='rounded-3xl sm:max-w-[min(92vw,1360px)] [&_[data-slot=button]]:min-h-11'
-      contentHeight='min(66dvh, 720px)'
-      footerClassName='flex-row flex-wrap items-center'
+      contentClassName='h-[min(700px,calc(100dvh-2rem))] gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[min(1092px,calc(100vw-2rem))] sm:p-0 [&>div:nth-child(2)]:mx-0 [&>div:nth-child(2)]:flex-1 [&>div:nth-child(2)]:overflow-hidden [&_[data-slot=button]]:min-h-11 [&_[data-slot=button]]:min-w-11 [&_[data-slot=dialog-close]]:size-11'
+      headerClassName='border-b px-5 py-4 pr-14'
+      contentHeight='100%'
+      bodyClassName='h-full px-0 py-0'
+      footerClassName='mx-0 mb-0 flex-row flex-wrap items-center border-t p-3 sm:mx-0 sm:mb-0 sm:p-3'
       footer={
         <>
           <p
@@ -159,7 +171,14 @@ export function DynamicExclusionsDialog(props: {
         </>
       }
     >
-      <div className='space-y-4'>
+      <div className='flex h-full min-h-0 flex-col'>
+        {modelQuery.isPending && <LoadingState inline size='sm' />}
+        {modelQuery.isError && (
+          <ErrorState
+            description={t('Loading failed. Please retry.')}
+            onRetry={() => void modelQuery.refetch()}
+          />
+        )}
         <CandidateFilters
           search={search}
           category={category}
@@ -178,9 +197,9 @@ export function DynamicExclusionsDialog(props: {
             setPage(1)
           }}
         />
-        <div className='grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_280px]'>
+        <div className='flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1fr)_248px] lg:overflow-hidden'>
           <section
-            className='min-w-0 space-y-3'
+            className='min-h-0 min-w-0 shrink-0 space-y-3 p-3 lg:overflow-y-auto'
             aria-label={t('Routing candidates')}
           >
             <div className='flex flex-wrap items-center justify-between gap-2'>
@@ -332,7 +351,7 @@ export function DynamicExclusionsDialog(props: {
             />
           </section>
           <aside
-            className='min-w-0 space-y-4 border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5'
+            className='min-h-0 min-w-0 shrink-0 space-y-3 border-t p-3 lg:overflow-y-auto lg:border-t-0 lg:border-l'
             aria-label={t('Exclusion list')}
           >
             {!!draft.excluded_groups?.length && (
@@ -366,43 +385,32 @@ export function DynamicExclusionsDialog(props: {
                 {t('Nothing is excluded. All available groups can be used.')}
               </p>
             )}
+            {!!draft.excluded_models?.length && (
+              <section className='space-y-2'>
+                <h4 className='text-muted-foreground text-xs'>
+                  {t('Models not to use')}
+                </h4>
+                {draft.excluded_models?.map((name) => (
+                  <Button
+                    key={name}
+                    type='button'
+                    variant='outline'
+                    className='h-auto w-full justify-between break-all whitespace-normal'
+                    aria-label={t('Restore model {{model}}', { model: name })}
+                    onClick={() => restoreModel(name)}
+                  >
+                    {name}
+                    <span aria-hidden='true'>×</span>
+                  </Button>
+                ))}
+              </section>
+            )}
             <section className='space-y-2'>
-              <h4 className='text-muted-foreground text-xs'>
-                {t('Models not to use')}
-              </h4>
-              <p className='text-muted-foreground text-xs'>
-                {t('No groups will be used for these models.')}
-              </p>
-              {draft.excluded_models?.map((name) => (
-                <Button
-                  key={name}
-                  type='button'
-                  variant='outline'
-                  className='h-auto w-full justify-between break-all whitespace-normal'
-                  aria-label={t('Restore model {{model}}', { model: name })}
-                  onClick={() =>
-                    setDraft((current) => ({
-                      ...current,
-                      excluded_models: current.excluded_models?.filter(
-                        (value) => value !== name
-                      ),
-                    }))
-                  }
-                >
-                  {name}
-                  <span aria-hidden='true'>×</span>
-                </Button>
-              ))}
-            </section>
-            <section className='space-y-2'>
-              <h4 className='text-muted-foreground text-xs'>
-                {t('Groups not to use for any model')}
-              </h4>
-              <p className='text-muted-foreground text-xs'>
-                {t(
-                  'These groups will not be used, no matter which model you call.'
-                )}
-              </p>
+              {!!draft.excluded_groups?.length && (
+                <h4 className='text-muted-foreground text-xs'>
+                  {t('Groups not to use for any model')}
+                </h4>
+              )}
               <RoutingSelect
                 label={t('Exclude group everywhere')}
                 value=''
@@ -447,54 +455,54 @@ export function DynamicExclusionsDialog(props: {
                 </Button>
               ))}
             </section>
-            <section className='space-y-3'>
-              <h4 className='text-muted-foreground text-xs'>
-                {t('Groups not to use for a specific model')}
-              </h4>
-              <p className='text-muted-foreground text-xs'>
-                {t(
-                  'Applies only to the specified model. Other models are unaffected.'
-                )}
-              </p>
-              {Object.entries(draft.excluded_model_groups ?? {}).map(
-                ([name, values]) => (
-                  <div key={name} className='space-y-2'>
-                    <div className='flex flex-wrap items-center justify-between gap-2'>
-                      <p className='text-xs font-medium break-all'>{name}</p>
-                      <Button
-                        type='button'
-                        variant='ghost'
-                        size='sm'
-                        aria-label={t('Restore all exclusions for {{model}}', {
-                          model: name,
-                        })}
-                        onClick={() => restoreModel(name)}
-                      >
-                        {t('Restore this entire model')}
-                      </Button>
+            {!!pairCount && (
+              <section className='space-y-3'>
+                <h4 className='text-muted-foreground text-xs'>
+                  {t('Groups not to use for a specific model')}
+                </h4>
+                {Object.entries(draft.excluded_model_groups ?? {}).map(
+                  ([name, values]) => (
+                    <div key={name} className='space-y-2'>
+                      <div className='flex flex-wrap items-center justify-between gap-2'>
+                        <p className='text-xs font-medium break-all'>{name}</p>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='sm'
+                          aria-label={t(
+                            'Restore all exclusions for {{model}}',
+                            {
+                              model: name,
+                            }
+                          )}
+                          onClick={() => restoreModel(name)}
+                        >
+                          {t('Restore this entire model')}
+                        </Button>
+                      </div>
+                      {values.map((group) => (
+                        <Button
+                          key={group}
+                          type='button'
+                          variant='outline'
+                          className='h-auto w-full justify-between break-all whitespace-normal'
+                          aria-label={t('Restore {{model}} / {{group}}', {
+                            model: name,
+                            group,
+                          })}
+                          onClick={() =>
+                            updatePairs([{ model: name, group }], true)
+                          }
+                        >
+                          {group}
+                          <span aria-hidden='true'>×</span>
+                        </Button>
+                      ))}
                     </div>
-                    {values.map((group) => (
-                      <Button
-                        key={group}
-                        type='button'
-                        variant='outline'
-                        className='h-auto w-full justify-between break-all whitespace-normal'
-                        aria-label={t('Restore {{model}} / {{group}}', {
-                          model: name,
-                          group,
-                        })}
-                        onClick={() =>
-                          updatePairs([{ model: name, group }], true)
-                        }
-                      >
-                        {group}
-                        <span aria-hidden='true'>×</span>
-                      </Button>
-                    ))}
-                  </div>
-                )
-              )}
-            </section>
+                  )
+                )}
+              </section>
+            )}
           </aside>
         </div>
       </div>

@@ -19,8 +19,8 @@ type RankKey struct {
 }
 
 // RankObservation is an already-folded snapshot of current hard-legal channels
-// and nodes for exactly one K/stage. Counts cover 24h; Response1h fields are for
-// display only. MeanMS includes successful samples only, using the protocol's
+// and nodes for exactly one K/stage. Eligible/Success cover 24h; speed fields
+// cover 1h. MeanMS includes successful samples only, using the protocol's
 // TTFT/complete-response/task-terminal duration. No historical filtering or DB
 // access is performed here; the caller must supply the correct rolling windows.
 type RankObservation struct {

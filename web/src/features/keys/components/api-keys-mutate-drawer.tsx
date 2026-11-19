@@ -427,6 +427,13 @@ export function ApiKeysMutateDrawer({
                 name='routing'
                 render={({ field }) => (
                   <FormItem>
+                    {loadedKey?.routing_requires_update && (
+                      <p role='alert' className='text-warning text-sm'>
+                        {t(
+                          'Routing settings need updating. Choose and save a new routing configuration. Existing calls remain blocked until then.'
+                        )}
+                      </p>
+                    )}
                     <RoutingControl
                       keyConfiguration
                       key={initializedTarget ?? 'uninitialized'}
@@ -500,6 +507,8 @@ export function ApiKeysMutateDrawer({
                                   ...original,
                                   routing: reviewedKey.routing,
                                   routing_version: reviewedKey.routing_version,
+                                  routing_requires_update:
+                                    reviewedKey.routing_requires_update,
                                   allow_routing_self_write:
                                     reviewedKey.allow_routing_self_write,
                                 }

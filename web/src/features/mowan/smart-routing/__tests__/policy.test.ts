@@ -32,11 +32,11 @@ const baseKey = {
 }
 
 test.each([
-  [{}, false],
-  [{ try_soft_offline: false }, false],
-  [{ try_soft_offline: true }, true],
+  [{}, []],
+  [{ try_soft_offline_groups: [] }, []],
+  [{ try_soft_offline_groups: ['priority'] }, ['priority']],
 ])(
-  'API key response normalizes soft-offline flag %j to %s',
+  'API key response normalizes independent group preferences %j to %s',
   (flag, expected) => {
     const parsed = apiKeySchema.parse({
       ...baseKey,
@@ -50,12 +50,12 @@ test.each([
       },
     })
     expect(parsed.routing).toMatchObject({
-      models: { 'gpt-4o-mini': { try_soft_offline: expected } },
+      models: { 'gpt-4o-mini': { try_soft_offline_groups: expected } },
     })
     expect(
       transformFormDataToPayload(transformApiKeyToFormDefaults(parsed)).routing
     ).toMatchObject({
-      models: { 'gpt-4o-mini': { try_soft_offline: expected } },
+      models: { 'gpt-4o-mini': { try_soft_offline_groups: expected } },
     })
   }
 )
@@ -92,7 +92,7 @@ test('custom routing rejects unknown policy and model fields', () => {
       'gpt-4o-mini': {
         groups: ['priority'],
         strategy: 'manual',
-        try_soft_offline: false,
+        try_soft_offline_groups: [],
       },
     },
   }
@@ -144,12 +144,12 @@ test('custom policies round trip manual order and discard fields inactive in the
       z: {
         groups: ['priority', 'standard'],
         strategy: 'manual',
-        try_soft_offline: true,
+        try_soft_offline_groups: ['priority'],
       },
       a: {
         groups: ['priority', 'standard'],
-        strategy: 'speed',
-        try_soft_offline: false,
+        strategy: 'manual',
+        try_soft_offline_groups: [],
       },
     },
   }

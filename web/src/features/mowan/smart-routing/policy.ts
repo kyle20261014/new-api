@@ -26,7 +26,9 @@ export function normalizeRouting(policy: RoutingPolicy): RoutingPolicy {
             model,
             {
               strategy: config.strategy,
-              try_soft_offline: config.try_soft_offline,
+              try_soft_offline_groups: [
+                ...config.try_soft_offline_groups,
+              ].sort(),
               groups:
                 config.strategy === 'manual'
                   ? [...config.groups]
@@ -59,8 +61,13 @@ export function setModelGroups(
   if (groups.length === 0) delete models[model]
   else {
     models[model] = {
-      ...(models[model] ?? { strategy: 'balanced', try_soft_offline: false }),
+      ...(models[model] ?? {
+        strategy: Object.values(models)[0]?.strategy ?? 'balanced',
+      }),
       groups,
+      try_soft_offline_groups: (
+        models[model]?.try_soft_offline_groups ?? []
+      ).filter((group) => groups.includes(group)),
     }
   }
   return { ...policy, models }

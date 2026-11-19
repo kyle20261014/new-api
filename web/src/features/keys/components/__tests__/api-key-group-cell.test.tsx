@@ -46,6 +46,7 @@ await i18n.use(initReactI18next).init({
 function CellHarness(props: {
   group: string
   routing?: RoutingPolicy | null
+  routingRequiresUpdate?: boolean
   ratio?: number | string
   crossGroupRetry?: boolean
   shouldReduceMotion?: boolean
@@ -56,6 +57,7 @@ function CellHarness(props: {
         <ApiKeyGroupCell
           group={props.group}
           routing={props.routing}
+          routingRequiresUpdate={props.routingRequiresUpdate}
           ratio={props.ratio}
           crossGroupRetry={props.crossGroupRetry ?? false}
           shouldReduceMotion={props.shouldReduceMotion ?? false}
@@ -64,6 +66,12 @@ function CellHarness(props: {
     </I18nextProvider>
   )
 }
+
+test('an unsupported stored policy is marked for repair instead of shown as inherited routing', () => {
+  render(<CellHarness group='default' routingRequiresUpdate />)
+  expect(screen.getByText('Routing needs update')).toBeVisible()
+  expect(screen.queryByText('default')).not.toBeInTheDocument()
+})
 
 describe('API key group table cell', () => {
   test('labels a saved balanced smart key instead of inheriting its empty legacy group', () => {
@@ -90,7 +98,7 @@ describe('API key group table cell', () => {
             chat: {
               groups: ['priority'],
               strategy: 'manual',
-              try_soft_offline: false,
+              try_soft_offline_groups: [],
             },
           },
         }}

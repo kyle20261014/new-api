@@ -54,6 +54,7 @@ export const apiKeySchema = z.object({
   allow_user_quota_query: z.boolean().optional().default(false),
   routing: routingSchema.nullable().optional(),
   routing_version: z.number().int().nonnegative().optional(),
+  routing_requires_update: z.boolean().optional(),
   allow_routing_self_write: z.boolean().optional(),
 })
 

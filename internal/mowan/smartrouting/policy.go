@@ -13,9 +13,9 @@ const MaxPolicyBytes = 64 * 1024
 const ContextKey = "mowan_token_routing"
 
 type ModelPolicy struct {
-	Strategy       string   `json:"strategy"`
-	Groups         []string `json:"groups"`
-	TrySoftOffline bool     `json:"try_soft_offline,omitempty"`
+	Strategy             string   `json:"strategy"`
+	Groups               []string `json:"groups"`
+	TrySoftOfflineGroups []string `json:"try_soft_offline_groups,omitempty"`
 }
 
 type Policy struct {
@@ -71,7 +71,7 @@ func ParsePolicy(data []byte) (Policy, error) {
 		}
 		for _, fields := range models {
 			for key := range fields {
-				if !slices.Contains([]string{"strategy", "groups", "try_soft_offline"}, key) {
+				if !slices.Contains([]string{"strategy", "groups", "try_soft_offline_groups"}, key) {
 					return p, common.NewMessage("Unknown routing model field: {{field}}", map[string]any{"field": key})
 				}
 				if strings.TrimSpace(string(fields[key])) == "null" {
@@ -124,12 +124,25 @@ func (p Policy) Validate() error {
 		if len(p.Models) == 0 || len(p.Models) > 200 || p.ExcludedModels != nil || p.ExcludedGroups != nil || p.ExcludedModelGroups != nil {
 			return common.NewMessage("Custom routing requires configured models")
 		}
+		strategy := ""
 		for name, policy := range p.Models {
 			if !validIdentifier(name, 255) || (!dynamicStrategy(policy.Strategy) && policy.Strategy != "manual") || len(policy.Groups) == 0 {
 				return common.NewMessage("Invalid custom routing model")
 			}
 			if err := validateList(policy.Groups, 100, 64, true); err != nil {
 				return err
+			}
+			if strategy != "" && strategy != policy.Strategy {
+				return common.NewMessage("Custom routing requires one scheduling strategy")
+			}
+			strategy = policy.Strategy
+			if err := validateList(policy.TrySoftOfflineGroups, 100, 64, true); err != nil {
+				return err
+			}
+			for _, group := range policy.TrySoftOfflineGroups {
+				if !slices.Contains(policy.Groups, group) {
+					return common.NewMessage("Offline preferences require selected groups")
+				}
 			}
 		}
 		return nil
@@ -162,10 +175,11 @@ func (p Policy) CanonicalJSON() (string, error) {
 	p.Models = maps.Clone(p.Models)
 	p.ExcludedModelGroups = maps.Clone(p.ExcludedModelGroups)
 	for name, policy := range p.Models {
+		policy.TrySoftOfflineGroups = slices.Sorted(slices.Values(policy.TrySoftOfflineGroups))
 		if policy.Strategy != "manual" {
 			policy.Groups = slices.Sorted(slices.Values(policy.Groups))
-			p.Models[name] = policy
 		}
+		p.Models[name] = policy
 	}
 	p.ExcludedModels = slices.Sorted(slices.Values(p.ExcludedModels))
 	p.ExcludedGroups = slices.Sorted(slices.Values(p.ExcludedGroups))

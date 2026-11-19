@@ -31,6 +31,7 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/privacy-policy",
 	"GET /api/about",
 	"GET /api/home_page_content",
+	"GET /api/mowan/homepage/models",
 	"GET /api/ratio_config",
 	"GET /api/user/groups",
 
@@ -76,6 +77,7 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/mowan/smart-routing/self",
 	"PUT /api/mowan/smart-routing/self",
 	"GET /api/mowan/smart-routing/self/candidates",
+	"GET /api/mowan/smart-routing/self/models",
 }
 
 // accessTokenHelperRoutes are declared through handlePermissionRoute outside

@@ -24,7 +24,7 @@ test('a saved custom policy survives switching to a dynamic strategy and reopeni
       chat: {
         groups: ['standard'],
         strategy: 'manual',
-        try_soft_offline: true,
+        try_soft_offline_groups: ['standard'],
       },
     },
   }
@@ -91,9 +91,13 @@ test('a saved custom policy survives switching to a dynamic strategy and reopeni
   expect(
     await screen.findByRole('button', { name: 'Remove chat / standard' })
   ).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await user.click(
+    screen.getByRole('button', { name: 'Next: Scheduling configuration' })
+  )
   expect(
-    screen.getByRole('switch', { name: /Try temporarily offline groups/ })
+    screen.getByRole('switch', {
+      name: 'Try chat / standard while temporarily offline',
+    })
   ).toBeChecked()
   await user.click(
     screen.getByRole('button', { name: 'Use this configuration' })

@@ -57,6 +57,43 @@ func TestTokenRoutingRejectedCredentialsAreAudited(t *testing.T) {
 	}
 }
 
+func TestUnsupportedStoredRoutingRemainsVisibleAndCanBeExplicitlyReplaced(t *testing.T) {
+	user, _ := setupAccessTokenAudit(t)
+	db := model.DB
+	migrateTokenControllerTestDB(t, db)
+	token := seedToken(t, db, user.Id, "needs-new-routing", "unsupported-routing-secret")
+	oldPolicy := `{"schema_version":1,"mode":"smart","strategy":"custom","models":{"chat":{"groups":["default"],"strategy":"manual","try_soft_offline":true}}}`
+	row := model.TokenRouting{TokenID: token.Id, SchemaVersion: 1, Mode: "smart", PolicyJSON: oldPolicy, Version: 7, LegacySnapshot: `{"group":"default","auto_groups_raw":"","cross_group_retry":false}`}
+	require.NoError(t, db.Create(&row).Error)
+	_, err := model.GetTokenRouting(db, token.Id)
+	require.Error(t, err, "runtime must not interpret the old policy")
+	responses, err := loadMaskedTokenResponses(db, []*model.Token{token})
+	require.NoError(t, err, "one obsolete policy must not break the Key list")
+	encoded, err := common.Marshal(responses)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"routing_requires_update":true`)
+	assert.NotContains(t, string(encoded), "try_soft_offline")
+	assert.NotContains(t, string(encoded), token.Key)
+	_, jwt := createAccessTokenTestSession(t, user.Id, "unsupported-routing-repair")
+	router := gin.New()
+	router.Use(middleware.RequestId(), middleware.AccessTokenAudit())
+	router.PUT("/api/token/", middleware.TokenOperationAudit(), middleware.UserAuth(), UpdateToken)
+	for _, version := range []int{6, 7} {
+		response := accessTokenRequest(router, "PUT", "/api/token/", jwt, "", fmt.Sprintf(`{"id":%d,"name":"reconfigured","routing":{"schema_version":1,"mode":"smart","strategy":"balanced"},"expected_routing_version":%d}`, token.Id, version))
+		if version == 6 {
+			require.Equal(t, 409, response.Code, response.Body.String())
+			continue
+		}
+		require.Equal(t, 200, response.Code, response.Body.String())
+		require.True(t, decodeAPIResponse(t, response).Success, response.Body.String())
+	}
+	saved, err := model.GetTokenRouting(db, token.Id)
+	require.NoError(t, err)
+	assert.Equal(t, int64(8), saved.Version)
+	assert.Equal(t, row.LegacySnapshot, saved.LegacySnapshot)
+	assert.NotContains(t, saved.PolicyJSON, "try_soft_offline")
+}
+
 func TestTokenRoutingSessionPATScopesOwnershipAndAudit(t *testing.T) {
 	user, _ := setupAccessTokenAudit(t)
 	db := model.DB
