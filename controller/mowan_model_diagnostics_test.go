@@ -13,6 +13,7 @@ import (
 	diagnostics "github.com/QuantumNous/new-api/internal/mowan/modeldiagnostics"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
@@ -136,4 +137,16 @@ func TestDiagnosticRateLimitBeforeRelayHasNoPendingCharge(t *testing.T) {
 	var count int64
 	require.NoError(t, db.Model(&model.RoutingFundingSession{}).Count(&count).Error)
 	require.Zero(t, count)
+}
+
+func TestDiagnosticChatRequestUsesRelativeUpstreamPath(t *testing.T) {
+	request, err := newDiagnosticChatRequest(context.Background(), []byte(`{"model":"chat-test"}`))
+	require.NoError(t, err)
+	require.Empty(t, request.URL.Scheme)
+	require.Empty(t, request.URL.Host)
+	require.Equal(t, "/v1/chat/completions", request.URL.String())
+	require.Equal(t, "/v1/chat/completions", request.RequestURI)
+	require.Equal(t, "application/json", request.Header.Get("Content-Type"))
+	require.Equal(t, "https://antrouter.ai/v1/chat/completions", relaycommon.GetFullRequestURL("https://antrouter.ai", request.URL.String(), constant.ChannelTypeOpenAI))
+	require.NotContains(t, request.URL.String(), "diagnostics.internal")
 }
