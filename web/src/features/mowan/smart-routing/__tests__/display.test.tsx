@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
 import { expect, test } from 'vitest'
@@ -12,6 +13,63 @@ const i18n = createInstance()
 await i18n
   .use(initReactI18next)
   .init({ lng: 'en', resources: { en: { translation: {} } } })
+
+test.each([
+  ['channel_pricing_ambiguous', 'Prices cannot be compared yet.'],
+  ['mixed_provider_pricing', 'Prices cannot be compared yet.'],
+  ['estimate_unavailable', 'The cost of this request cannot be estimated yet.'],
+  [
+    'different_billing_contract',
+    'Different billing methods prevent a price comparison.',
+  ],
+  [
+    'request_usage_unknown',
+    'Usage is not yet known, so the total cost cannot be estimated.',
+  ],
+])(
+  'an unavailable quote with %s does not claim an unsupported cause',
+  (reason, message) => {
+    const candidate: RoutingCandidate = {
+      model: 'chat',
+      display_name: 'Chat',
+      group: 'standard',
+      category: 'text',
+      available: true,
+      health: 'unknown',
+      quote: { comparison: 'unavailable', reason, currency: 'USD', prices: [] },
+      metrics: {
+        protocol_class: 'openai',
+        response_kind: 'ttft',
+        response_ms_1h: null,
+        response_samples_1h: 0,
+        success_24h: null,
+        samples_24h: 0,
+        stale: true,
+        updated_at: null,
+      },
+    }
+    render(
+      <I18nextProvider i18n={i18n}>
+        <CandidateCard candidate={candidate} />
+      </I18nextProvider>
+    )
+    expect(screen.getAllByText(message).length).toBeGreaterThan(0)
+    if (reason !== 'different_billing_contract') {
+      expect(
+        screen.queryByText(
+          'Different billing methods prevent a price comparison.'
+        )
+      ).not.toBeInTheDocument()
+    }
+    if (reason !== 'request_usage_unknown') {
+      expect(
+        screen.queryByText(
+          'Usage is not yet known, so the total cost cannot be estimated.'
+        )
+      ).not.toBeInTheDocument()
+    }
+  }
+)
 
 test('unknown metrics remain unknown while actual zero prices and bounded prices remain distinguishable', () => {
   const candidate: RoutingCandidate = {
@@ -55,25 +113,102 @@ test('unknown metrics remain unknown while actual zero prices and bounded prices
       <CandidateCard candidate={candidate} />
     </I18nextProvider>
   )
-  expect(screen.getByText('Free input: $0.00 / token')).toBeInTheDocument()
   expect(
-    screen.getByText('Output: $0.10 – $0.80 / image · resolution')
-  ).toBeInTheDocument()
-  expect(screen.getByText('Audio: Unknown / second')).toBeInTheDocument()
-  expect(
-    screen.getByText('Request pricing rule: 1.25 / Multiplier')
+    screen.getByRole('row', { name: 'Free input: $0.00 / token' })
   ).toBeInTheDocument()
   expect(
-    screen.getByText('Input tokens: $0.005 / 1M token')
+    screen.getByRole('row', {
+      name: 'Output: $0.10 – $0.80 / image · resolution',
+    })
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('row', { name: 'Audio: Unknown / second' })
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('row', { name: 'Request pricing rule: 1.25 / Multiplier' })
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('row', { name: 'Input tokens: $0.005 / 1M token' })
   ).toBeInTheDocument()
   expect(
     screen.getByText(
-      'Request usage is unknown; a reliable price comparison is unavailable.'
+      'Usage is not yet known, so the total cost cannot be estimated.'
     )
   ).toBeInTheDocument()
-  expect(screen.getByText('Task completion · 1h')).toBeInTheDocument()
-  expect(screen.getByText('Success rate · 24h')).toBeInTheDocument()
-  expect(screen.getAllByText('Unknown · n=0')).toHaveLength(2)
+  expect(
+    screen.getByText('Task completion time · Last hour')
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('Call success rate · Last 24 hours')
+  ).toBeInTheDocument()
+  expect(screen.getAllByText('Unknown · Calls counted: 0')).toHaveLength(2)
+})
+
+test('protocol observations preserve separate response kinds, unknowns, samples and stale timestamps', async () => {
+  const metrics: RoutingCandidate['metrics'] = {
+    protocol_class: 'openai',
+    response_kind: 'ttft',
+    response_ms_1h: 3,
+    response_samples_1h: 2,
+    success_24h: 0.5,
+    samples_24h: 4,
+    stale: false,
+    updated_at: 1000,
+  }
+  const candidate: RoutingCandidate = {
+    model: 'mixed',
+    display_name: 'Mixed',
+    group: 'standard',
+    category: 'text',
+    available: true,
+    health: 'normal',
+    quote: { comparison: 'available', currency: 'USD', prices: [] },
+    metrics,
+    variants: [
+      {
+        ...metrics,
+        provider_key: 'openai',
+        operation_key: 'stream',
+        health: 'normal',
+      },
+      {
+        ...metrics,
+        provider_key: 'tasks',
+        operation_key: 'image',
+        health: 'unknown',
+        response_kind: 'task_terminal',
+        response_ms_1h: null,
+        response_samples_1h: 0,
+        success_24h: null,
+        samples_24h: 0,
+        updated_at: null,
+        stale: true,
+      },
+    ],
+  }
+  render(
+    <I18nextProvider i18n={i18n}>
+      <CandidateCard candidate={candidate} />
+    </I18nextProvider>
+  )
+  await userEvent.click(screen.getByText('Protocol observations'))
+  const observations = screen
+    .getByText('Protocol observations')
+    .closest('details')
+  if (!observations) throw new Error('Missing protocol observations')
+  const entries = within(observations).getAllByRole('listitem')
+  expect(entries[0]).toHaveTextContent(
+    'Time to start replying · Last hour: 3 ms · Calls counted: 2'
+  )
+  expect(entries[0]).toHaveTextContent(
+    'Call success rate · Last 24 hours: 50% · Calls counted: 4'
+  )
+  expect(entries[1]).toHaveTextContent(
+    'Task completion time · Last hour: Unknown · Calls counted: 0'
+  )
+  expect(entries[1]).toHaveTextContent(
+    'Updated: Unknown · Older data, for reference only'
+  )
 })
 
 test.each([

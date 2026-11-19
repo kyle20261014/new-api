@@ -1,9 +1,10 @@
-import { useId } from 'react'
+import { Fragment, useId, type ReactNode } from 'react'
 
 import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -11,7 +12,12 @@ import {
 export function RoutingSelect(props: {
   label: string
   value: string
-  options: Array<{ value: string; label: string }>
+  options: Array<{
+    value: string
+    label: string
+    description?: string
+    badge?: ReactNode
+  }>
   onChange: (value: string) => void
   disabled?: boolean
 }) {
@@ -30,15 +36,39 @@ export function RoutingSelect(props: {
       >
         <SelectTrigger id={id} className='min-h-11 w-full min-w-0'>
           <SelectValue>
-            {props.options.find((item) => item.value === props.value)?.label ??
+            {props.options.find((item) => item.value === props.value)?.badge ??
+              props.options.find((item) => item.value === props.value)?.label ??
               props.value}
           </SelectValue>
         </SelectTrigger>
-        <SelectContent>
-          {props.options.map((item) => (
-            <SelectItem key={item.value} value={item.value}>
-              {item.label}
-            </SelectItem>
+        <SelectContent
+          alignItemWithTrigger={!props.options.some((item) => item.description)}
+          className='max-w-[calc(100vw-2rem)]'
+        >
+          {props.options.map((item, index) => (
+            <Fragment key={item.value}>
+              {index > 0 && item.description && (
+                <SelectSeparator className='mx-3 my-0' />
+              )}
+              <SelectItem
+                value={item.value}
+                aria-label={item.label}
+                className={
+                  item.description
+                    ? 'min-h-20 py-3 pl-3 [&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:whitespace-normal'
+                    : undefined
+                }
+              >
+                <span className='flex min-w-0 flex-col items-start gap-2'>
+                  {item.badge ?? item.label}
+                  {item.description && (
+                    <span className='text-muted-foreground text-xs leading-relaxed'>
+                      {item.description}
+                    </span>
+                  )}
+                </span>
+              </SelectItem>
+            </Fragment>
           ))}
         </SelectContent>
       </Select>

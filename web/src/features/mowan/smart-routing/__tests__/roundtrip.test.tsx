@@ -95,7 +95,9 @@ test('a saved custom policy survives switching to a dynamic strategy and reopeni
   expect(
     screen.getByRole('switch', { name: /Try temporarily offline groups/ })
   ).toBeChecked()
-  await user.click(screen.getByRole('button', { name: 'Apply to draft' }))
+  await user.click(
+    screen.getByRole('button', { name: 'Use this configuration' })
+  )
   expect(changed).toHaveBeenLastCalledWith(initial)
   client.clear()
 })
