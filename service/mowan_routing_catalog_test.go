@@ -82,6 +82,52 @@ func TestRoutingModelIndexUsesAdvancedCustomEndpoints(t *testing.T) {
 	require.Equal(t, candidates.Items[0].Category, items[0].Category)
 }
 
+func TestRoutingCatalogCategoryUsesExplicitTagsBeforeEndpointInference(t *testing.T) {
+	for _, tc := range []struct{ tags, want string }{
+		{"video", "video"}, {"image", "image"}, {"AUDIO", "audio"},
+		{"vision;文本模型", "text"}, {"premium,图片模型|fast", "image"},
+		{"vision\t视频模型\n", "video"}, {"音频模型", "audio"},
+		{"text;image;video", "video"}, {"vision", "text"},
+	} {
+		t.Run(tc.tags, func(t *testing.T) {
+			require.Equal(t, tc.want, catalogCategory(model.Pricing{ModelName: "generic-gateway-model", Tags: tc.tags, SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI}}))
+		})
+	}
+	require.Equal(t, "image", catalogCategory(model.Pricing{SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeImageGeneration}}))
+	require.Equal(t, "audio", catalogCategory(model.Pricing{ModelName: "whisper-1"}))
+}
+
+func TestRoutingCatalogIndexAndCandidatesUseTheSameMetadataTags(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Model{}, &model.Vendor{}, &model.Option{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "tag-owner", AffCode: "tag-owner", Group: "default", Status: common.UserStatusEnabled}).Error)
+	metadata := []model.Model{
+		{ModelName: "seedance-", NameRule: model.NameRulePrefix, Tags: "video", Icon: "Doubao.Color", Status: 1, Endpoints: `{"openai":"/v1/chat/completions"}`},
+		{ModelName: "seedream-x", Tags: "image", Status: 1},
+	}
+	require.NoError(t, db.Create(&metadata).Error)
+	createChannelSelectAutoGroupsChannel(t, db, 7905, "default", "seedance-x")
+	createChannelSelectAutoGroupsChannel(t, db, 7906, "default", "seedream-x")
+	model.InitChannelCache()
+	model.InvalidatePricingCache()
+	t.Cleanup(model.InvalidatePricingCache)
+	items, err := RoutingCatalogModels(context.Background(), CatalogRequest{UserID: 1})
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	for _, item := range items {
+		want := "image"
+		if item.Model == "seedance-x" {
+			want = "video"
+			require.Equal(t, "Doubao.Color", item.Icon)
+		}
+		require.Equal(t, want, item.Category)
+		candidates, err := RoutingCatalog(context.Background(), CatalogRequest{UserID: 1, Model: item.Model, Category: want, Page: 1, PageSize: 100})
+		require.NoError(t, err)
+		require.Len(t, candidates.Items, 1)
+		require.Equal(t, want, candidates.Items[0].Category)
+	}
+}
+
 func TestRoutingCatalogEffectivePluginOverrideMappingAndUsageProfile(t *testing.T) {
 	registry := jsplugin.NewRegistry()
 	_, err := registry.Register(`export const meta={apiVersion:1,key:"catalog-test",name:"test",version:"1.0.0",author:{name:"test"},models:["catalog-video"],fetchMode:"per_task",usageSchema:{image_count:{type:"number",unit:"count"}},usageProfiles:[{models:["catalog-video"],schema:{seconds:{type:"number",unit:"second"}}}],routes:[{method:"POST",path:"/catalog-test/submit",action:"create",type:"submit",decode:"decodeJob",render:"jobCreated"}]}; export const native={decodeJob:function(ctx){return ctx},jobCreated:function(ctx,task){return task}};export function buildSubmitRequest(){return {}};export function parseSubmitResponse(){return {}};export function buildQueryRequest(){return {}};export function parseTaskResult(){return {}};`, jsplugin.Options{})

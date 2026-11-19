@@ -102,7 +102,7 @@ func resolveModelMetadata(records []Model, names []string) map[string]*Model {
 // ResolveCatalogMetadata reads only presentation/visibility metadata, never prices.
 func ResolveCatalogMetadata(db *gorm.DB, names []string) (map[string]*Model, error) {
 	var records []Model
-	if err := db.Select("model_name", "name_rule", "status", "icon", "endpoints").Order("id").Find(&records).Error; err != nil {
+	if err := db.Select("model_name", "name_rule", "status", "icon", "tags", "endpoints").Order("id").Find(&records).Error; err != nil {
 		return nil, err
 	}
 	return resolveModelMetadata(records, names), nil

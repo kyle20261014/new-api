@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -364,9 +365,11 @@ func RoutingCatalogModels(ctx context.Context, req CatalogRequest) ([]CatalogMod
 		if len(using) == 0 {
 			continue
 		}
-		item := CatalogModel{Model: name, DisplayName: name, Category: catalogCategory(model.Pricing{ModelName: name, SupportedEndpointTypes: endpoints[name]}), GroupCount: len(using)}
+		item := CatalogModel{Model: name, DisplayName: name, GroupCount: len(using)}
+		metadataTags := ""
 		if m := metadata[name]; m != nil {
 			item.Icon = m.Icon
+			metadataTags = m.Tags
 			var declared map[string]any
 			if common.UnmarshalJsonStr(m.Endpoints, &declared) == nil {
 				for endpoint, value := range declared {
@@ -375,9 +378,9 @@ func RoutingCatalogModels(ctx context.Context, req CatalogRequest) ([]CatalogMod
 						endpoints[name] = append(endpoints[name], constant.EndpointType(endpoint))
 					}
 				}
-				item.Category = catalogCategory(model.Pricing{ModelName: name, SupportedEndpointTypes: endpoints[name]})
 			}
 		}
+		item.Category = catalogCategory(model.Pricing{ModelName: name, Tags: metadataTags, SupportedEndpointTypes: endpoints[name]})
 		out = append(out, item)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Model < out[j].Model })
@@ -517,6 +520,17 @@ func catalogTokenAllows(token *model.Token, name string) bool {
 }
 
 func catalogCategory(p model.Pricing) string {
+	// Match the model square's explicit category tags before inferring from a generic gateway's endpoints.
+	tags := strings.FieldsFunc(strings.ToLower(p.Tags), func(r rune) bool {
+		return r == ',' || r == ';' || r == '|' || unicode.IsSpace(r)
+	})
+	for _, category := range []struct{ name, localized string }{
+		{"video", "视频模型"}, {"image", "图片模型"}, {"audio", "音频模型"}, {"text", "文本模型"},
+	} {
+		if slices.Contains(tags, category.name) || slices.Contains(tags, category.localized) {
+			return category.name
+		}
+	}
 	for _, endpoint := range p.SupportedEndpointTypes {
 		if endpoint == constant.EndpointTypeOpenAIVideo {
 			return "video"
