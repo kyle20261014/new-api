@@ -399,14 +399,18 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       <CardFooter className='mt-auto border-0 bg-transparent pt-0'>
         <ModelPerfBadge
           perf={props.perf}
-          className='border-border/60 border-t pt-2'
+          className='border-border/60 flex-wrap gap-y-2 border-t pt-2'
         >
-          <div className='flex items-center gap-1'>
+          <div className='ml-auto flex shrink-0 items-center gap-1'>
             {supportsDiagnostics && (
               <ModelDiagnostics
                 model={props.model.model_name || ''}
                 trigger={
-                  <Button variant='outline' size='sm' className='min-w-0'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    className='min-w-0 whitespace-nowrap'
+                  >
                     <Activity aria-hidden className='size-3.5 shrink-0' />
                     <span className='truncate'>{t('Model diagnostics')}</span>
                   </Button>

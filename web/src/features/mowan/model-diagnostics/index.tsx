@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, Brain, Brush, FileText, Fingerprint } from 'lucide-react'
 import { useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
@@ -11,6 +12,8 @@ import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -18,7 +21,12 @@ import {
   getDiagnosticReports,
   startDiagnostic,
 } from './api'
-import { diagnosticStateKey } from './display'
+import {
+  diagnosticLabelKey,
+  diagnosticStateKey,
+  summarizeReport,
+  type DiagnosticTone,
+} from './display'
 import { DiagnosticReportView } from './report'
 import {
   isDiagnosticRunning,
@@ -40,6 +48,37 @@ const icons = {
   drawing: Brush,
 }
 
+const toneDot: Record<DiagnosticTone, string> = {
+  passed: 'bg-success',
+  failed: 'bg-destructive',
+  pending: 'bg-warning',
+  unknown: 'bg-muted-foreground/60',
+  idle: 'bg-muted-foreground/40',
+}
+
+const toneText: Record<DiagnosticTone, string> = {
+  passed: 'text-success',
+  failed: 'text-destructive',
+  pending: 'text-foreground',
+  unknown: 'text-muted-foreground',
+  idle: 'text-muted-foreground',
+}
+
+// History entries are picked by when, what and how it went; the opaque report
+// id only ever appears in the technical report.
+function historyLabel(
+  report: DiagnosticReport,
+  t: TFunction,
+  locale?: string
+): string {
+  const summary = summarizeReport(report)
+  const date = new Date(report.created_at * 1000).toLocaleDateString(
+    locale ?? 'en'
+  )
+  const verdict = summary.partial ? t('Partial score') : t(summary.labelKey)
+  return `${date} · ${t(diagnosticLabelKey(report.kind))} · ${verdict}`
+}
+
 type DiagnosticSelection = {
   group?: string
   kind?: DiagnosticKind
@@ -53,7 +92,8 @@ function DiagnosticWorkspace(props: {
   selection: DiagnosticSelection
   onSelectionChange: (selection: DiagnosticSelection) => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const queryClient = useQueryClient()
   const {
     group: selectedGroup = '',
@@ -118,10 +158,7 @@ function DiagnosticWorkspace(props: {
     visible.find((report) => report.id === historyId) ?? visible[0]
   const active = visible.find(isDiagnosticRunning)
   const label = (value: DiagnosticKind): string => {
-    if (value === 'connection') return t('Connection test')
-    if (value === 'fingerprint') return t('Fingerprint test')
-    if (value === 'intelligence') return t('Intelligence test')
-    return t('Drawing test')
+    return t(diagnosticLabelKey(value))
   }
   const prepare = () => {
     if (
@@ -207,27 +244,50 @@ function DiagnosticWorkspace(props: {
         >
           <TabsList
             aria-label={t('Model diagnostics')}
-            className='grid w-full grid-cols-2 gap-2 group-data-horizontal/tabs:h-auto lg:grid-cols-4'
+            className='grid w-full grid-cols-2 gap-2 rounded-none bg-transparent p-0 group-data-horizontal/tabs:h-auto lg:grid-cols-4'
           >
             {kinds.map((value) => {
               const Icon = icons[value]
               const latest = allReports.find(
                 (report) => report.kind === value && !report.creative
               )
+              const summary = latest ? summarizeReport(latest) : undefined
+              const tone = summary?.tone ?? 'idle'
+              const pillText = summary ? t(summary.labelKey) : t('Not tested')
               return (
                 <TabsTrigger
                   key={value}
                   value={value}
-                  className='min-h-11 min-w-0 flex-wrap px-2 py-2'
+                  className='border-border bg-card data-active:border-foreground/30 min-h-11 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 shadow-none'
                 >
-                  <Icon className='size-4' aria-hidden='true' />
-                  <span className='break-words whitespace-normal'>
+                  <Icon className='text-muted-foreground size-4' aria-hidden='true' />
+                  <span className='text-xs font-medium break-words whitespace-normal'>
                     {label(value)}
                   </span>
-                  <span className='text-muted-foreground w-full text-[10px]'>
-                    {latest
-                      ? t(diagnosticStateKey(latest.state))
-                      : t('Not tested')}
+                  <span
+                    className='flex w-full min-w-0 items-center justify-center gap-1.5 text-[11px]'
+                    title={pillText}
+                  >
+                    <span
+                      aria-hidden
+                      className={`size-1.5 shrink-0 rounded-full ${toneDot[tone]}`}
+                    />
+                    {summary?.score !== undefined && (
+                      <span
+                        className={`font-mono font-semibold tabular-nums ${toneText[tone]}`}
+                      >
+                        {formatNumber(summary.score, locale)}
+                        {summary.partial &&
+                          `/${formatNumber(summary.partial.max, locale)}`}
+                      </span>
+                    )}
+                    <span
+                      className={`truncate ${summary?.score === undefined ? toneText[tone] : 'text-muted-foreground'}`}
+                    >
+                      {summary?.score !== undefined
+                        ? `· ${t(summary.labelKey)}`
+                        : pillText}
+                    </span>
                   </span>
                 </TabsTrigger>
               )
@@ -282,7 +342,9 @@ function DiagnosticWorkspace(props: {
                             })
                           }
                         >
-                          <span className='truncate'>{report.id}</span>
+                          <span className='truncate'>
+                            {historyLabel(report, t, locale)}
+                          </span>
                         </Button>
                       ))}
                     </div>
