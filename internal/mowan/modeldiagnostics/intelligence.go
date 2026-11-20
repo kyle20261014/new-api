@@ -12,7 +12,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const IntelligenceVersion = "dsh-model-probe-8f97b83-mowan-grader-v2"
+// v3 adds a guarded closed-form proof for sumEven; reports graded by v2 stay
+// stored under v2 and are not re-scored.
+const IntelligenceVersion = "dsh-model-probe-8f97b83-mowan-grader-v3"
 
 type question struct {
 	Probe

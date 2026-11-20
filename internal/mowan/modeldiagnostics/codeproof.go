@@ -31,6 +31,10 @@ func proveEvenSum(reply string) (*bool, string) {
 		{`function sumEven(n) { MUTABLE $sum = 0; for (MUTABLE $i = 2; $i <= n; $i += 2) $sum += $i; return $sum; }`, "static_even_sum_loop_proven_for_safe_integer_sums"},
 		{`function sumEven(n) { if (n < 2) return 0; LOCAL $k = Math.floor(n / 2); return $k * ($k + 1); }`, "static_even_sum_formula_proven_for_safe_integer_sums"},
 		{`function sumEven(n) { if (n < 2) { return 0; } LOCAL $k = Math.floor(n / 2); return $k * ($k + 1); }`, "static_even_sum_formula_proven_for_safe_integer_sums"},
+		// Guarded formula: k = floor(n/2) >= 1 exactly when n >= 2, so the
+		// k > 0 branch is 2*(1+...+k) and the other branch is the empty sum.
+		{`function sumEven(n) { LOCAL $k = Math.floor(n / 2); return $k > 0 ? $k * ($k + 1) : 0; }`, "static_even_sum_guarded_formula_proven_for_safe_integer_sums"},
+		{`function sumEven(n) { LOCAL $k = Math.floor(n / 2); return $k > 0 ? ($k * ($k + 1)) : 0; }`, "static_even_sum_guarded_formula_proven_for_safe_integer_sums"},
 	} {
 		if matchProof(tokens, proofTokens(pattern.code)) {
 			return pointer(true), pattern.reason
@@ -39,7 +43,7 @@ func proveEvenSum(reply string) (*bool, string) {
 	return nil, "code_not_in_proven_subset"
 }
 
-var proofTokenRE = regexp.MustCompile(`[A-Za-z_$][A-Za-z0-9_$]*|[012]|<=|\+=|[(){};=+*/.,<]`)
+var proofTokenRE = regexp.MustCompile(`[A-Za-z_$][A-Za-z0-9_$]*|[012]|<=|\+=|[(){};=+*/.,<>?:]`)
 var proofIdentifierRE = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 
 func proofTokens(code string) []string {

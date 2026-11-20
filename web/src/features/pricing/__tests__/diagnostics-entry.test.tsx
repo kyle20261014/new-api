@@ -133,3 +133,30 @@ test('non-text rows keep the diagnostics entry hidden', () => {
     screen.queryByRole('button', { name: 'Model diagnostics' })
   ).not.toBeInTheDocument()
 })
+
+test('narrow cards wrap the footer actions instead of placing them over metrics', () => {
+  render(
+    <QueryClientProvider client={client}>
+      <ModelCard
+        model={pricingModel({ tags: 'text' })}
+        onClick={vi.fn()}
+        perf={{
+          avg_latency_ms: 3420,
+          success_rate: 65.71,
+          avg_tps: 6.2,
+          recent_success_series: [],
+        }}
+      />
+    </QueryClientProvider>
+  )
+
+  const metrics = screen.getByLabelText('Recent performance metrics')
+  expect(metrics).toHaveClass('flex-wrap')
+  const actions = screen.getByRole('button', { name: 'Model diagnostics' })
+    .parentElement as HTMLElement
+  // Actions stay in normal flow at the end of the wrapped row, never an
+  // absolute overlay above the metrics text.
+  expect(actions).toHaveClass('ml-auto', 'shrink-0')
+  expect(actions).not.toHaveClass('absolute')
+  expect(metrics.contains(actions)).toBe(true)
+})

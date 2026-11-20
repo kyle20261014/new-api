@@ -277,11 +277,16 @@ test('existing artwork previews on drawing open, unloads on tab change and close
   const reopened = await screen.findByTitle('Artwork preview')
   expect(reopened).not.toBe(first)
   await user.click(screen.getByText('Report history'))
-  await user.click(screen.getByRole('button', { name: 'older-art' }))
+  // History entries are labelled by time, kind and verdict, not by report id.
+  const history = screen.getByText('Report history').closest('details')
+  const entries = within(history as HTMLElement).getAllByRole('button')
+  await user.click(entries[1])
   expect(reopened).not.toBeInTheDocument()
-  expect(screen.getByTitle('Artwork preview').getAttribute('srcdoc')).toContain(
-    'older artwork'
-  )
+  await waitFor(() => {
+    const previews = screen.getAllByTitle('Artwork preview')
+    expect(previews).toHaveLength(1)
+    expect(previews[0]?.getAttribute('srcdoc')).toContain('older artwork')
+  })
   await user.click(screen.getByRole('button', { name: 'Technical report' }))
   const technical = await screen.findByRole('dialog', {
     name: 'Technical report',

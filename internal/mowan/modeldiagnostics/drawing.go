@@ -16,24 +16,37 @@ import (
 const DrawingVersion = "mowan-svg-structure-v1-parser-v2"
 
 type DrawingDetails struct {
-	HTML              string   `json:"html"`
-	ValidSVG          *bool    `json:"valid_svg"`
-	Loop              *bool    `json:"loop"`
-	Elements          *int     `json:"elements"`
-	Paths             *int     `json:"paths"`
-	Colors            *int     `json:"colors"`
-	Bytes             int      `json:"bytes"`
-	ViewBox           *bool    `json:"view_box"`
-	External          bool     `json:"external"`
-	Placeholder       bool     `json:"placeholder"`
-	Unclosed          bool     `json:"unclosed"`
-	StructuralPoints  int      `json:"structural_points"`
-	StructuralPenalty int      `json:"structural_penalty"`
-	AnomalyPenalty    int      `json:"anomaly_penalty"`
-	Anomaly           string   `json:"anomaly"`
-	AnomalyReasons    []string `json:"anomaly_reasons"`
-	UnknownMetrics    []string `json:"unknown_metrics"`
-	Limitation        string   `json:"limitation"`
+	HTML              string          `json:"html"`
+	ValidSVG          *bool           `json:"valid_svg"`
+	Loop              *bool           `json:"loop"`
+	Elements          *int            `json:"elements"`
+	Paths             *int            `json:"paths"`
+	Colors            *int            `json:"colors"`
+	Bytes             int             `json:"bytes"`
+	ViewBox           *bool           `json:"view_box"`
+	External          bool            `json:"external"`
+	Placeholder       bool            `json:"placeholder"`
+	Unclosed          bool            `json:"unclosed"`
+	StructuralPoints  int             `json:"structural_points"`
+	StructuralPenalty int             `json:"structural_penalty"`
+	AnomalyPenalty    int             `json:"anomaly_penalty"`
+	Anomaly           string          `json:"anomaly"`
+	AnomalyReasons    []string        `json:"anomaly_reasons"`
+	UnknownMetrics    []string        `json:"unknown_metrics"`
+	Metrics           []DrawingMetric `json:"metrics"`
+	Limitation        string          `json:"limitation"`
+}
+
+// DrawingMetric is one item of the published score breakdown. It is produced by
+// the same branches that add to StructuralPoints/penalties, so the displayed
+// rows always add up to the stored totals.
+type DrawingMetric struct {
+	Key     string `json:"key"`
+	Value   string `json:"value,omitempty"`
+	Points  int    `json:"points"`
+	Max     int    `json:"max,omitempty"`
+	Penalty bool   `json:"penalty,omitempty"`
+	Known   bool   `json:"known"`
 }
 
 func evaluateDrawing(answers []Answer) Result {
@@ -293,35 +306,70 @@ func analyzeDrawing(raw string) DrawingDetails {
 		d.Anomaly = "detected"
 		d.AnomalyPenalty = 30
 	}
-	if d.ValidSVG != nil && *d.ValidSVG {
-		d.StructuralPoints += 40
-	}
-	if d.Loop != nil && *d.Loop {
-		d.StructuralPoints += 25
-	}
-	if d.Elements != nil {
-		d.StructuralPoints += tierPoints(*d.Elements, 6, 15, 5, 10)
-	}
-	if d.Paths != nil && *d.Paths >= 5 {
-		d.StructuralPoints += 5
-	}
-	if d.Colors != nil {
-		d.StructuralPoints += tierPoints(*d.Colors, 2, 4, 5, 10)
-	}
-	d.StructuralPoints += tierPoints(d.Bytes, 1500, 4096, 5, 10)
-	if d.ViewBox != nil && *d.ViewBox {
-		d.StructuralPoints += 5
+	// The breakdown is the only place points are computed; the totals below are
+	// derived from it, so the published rows and the stored score cannot drift.
+	d.Metrics = []DrawingMetric{
+		{Key: "valid_svg", Value: boolValue(d.ValidSVG), Points: boolPoints(d.ValidSVG, 40), Max: 40, Known: d.ValidSVG != nil},
+		{Key: "loop", Value: boolValue(d.Loop), Points: boolPoints(d.Loop, 25), Max: 25, Known: d.Loop != nil},
+		{Key: "elements", Value: intValue(d.Elements), Points: intPoints(d.Elements, func(n int) int { return tierPoints(n, 6, 15, 5, 10) }), Max: 10, Known: d.Elements != nil},
+		{Key: "paths", Value: intValue(d.Paths), Points: intPoints(d.Paths, func(n int) int { return tierPoints(n, 5, 5, 5, 5) }), Max: 5, Known: d.Paths != nil},
+		{Key: "colors", Value: intValue(d.Colors), Points: intPoints(d.Colors, func(n int) int { return tierPoints(n, 2, 4, 5, 10) }), Max: 10, Known: d.Colors != nil},
+		{Key: "bytes", Value: strconv.Itoa(d.Bytes), Points: tierPoints(d.Bytes, 1500, 4096, 5, 10), Max: 10, Known: true},
+		{Key: "view_box", Value: boolValue(d.ViewBox), Points: boolPoints(d.ViewBox, 5), Max: 5, Known: d.ViewBox != nil},
 	}
 	if d.External {
-		d.StructuralPenalty += 25
+		d.Metrics = append(d.Metrics, DrawingMetric{Key: "external", Points: 25, Max: 25, Penalty: true, Known: true})
 	}
 	if d.Placeholder {
-		d.StructuralPenalty += 20
+		d.Metrics = append(d.Metrics, DrawingMetric{Key: "placeholder", Points: 20, Max: 20, Penalty: true, Known: true})
 	}
 	if d.Unclosed {
-		d.StructuralPenalty += 20
+		d.Metrics = append(d.Metrics, DrawingMetric{Key: "unclosed", Points: 20, Max: 20, Penalty: true, Known: true})
+	}
+	if d.AnomalyPenalty > 0 {
+		d.Metrics = append(d.Metrics, DrawingMetric{Key: "anomaly", Value: strings.Join(d.AnomalyReasons, ", "), Points: d.AnomalyPenalty, Max: 30, Penalty: true, Known: true})
+	}
+	d.StructuralPoints, d.StructuralPenalty, d.AnomalyPenalty = 0, 0, 0
+	for _, metric := range d.Metrics {
+		if !metric.Penalty {
+			d.StructuralPoints += metric.Points
+			continue
+		}
+		if metric.Key == "anomaly" {
+			d.AnomalyPenalty += metric.Points
+			continue
+		}
+		d.StructuralPenalty += metric.Points
 	}
 	return d
+}
+
+func boolValue(v *bool) string {
+	if v == nil {
+		return ""
+	}
+	return map[bool]string{true: "yes", false: "no"}[*v]
+}
+
+func boolPoints(v *bool, points int) int {
+	if v != nil && *v {
+		return points
+	}
+	return 0
+}
+
+func intValue(v *int) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.Itoa(*v)
+}
+
+func intPoints(v *int, points func(int) int) int {
+	if v == nil {
+		return 0
+	}
+	return points(*v)
 }
 
 func tierPoints(n, low, high, lowPoints, highPoints int) int {

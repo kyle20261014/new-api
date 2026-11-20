@@ -83,11 +83,11 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
         'Statistics cover the latest 24 active hours within 7 days, including the current hour.'
       )}
       className={cn(
-        'flex w-full min-w-0 items-center justify-between gap-3',
+        'flex w-full min-w-0 flex-wrap items-center justify-between gap-3',
         props.className
       )}
     >
-      <dl className='flex min-w-0 items-start gap-5 text-xs tabular-nums'>
+      <dl className='flex min-w-0 flex-wrap items-start gap-x-5 gap-y-2 text-xs tabular-nums'>
         <div className='w-24 shrink-0'>
           <dt
             title={t(
